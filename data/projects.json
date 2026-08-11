@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 2,
   "projects": [
     {
       "id": "blague-ii",
@@ -8,60 +8,242 @@
       "createdAt": "2026-08-11",
       "targetDate": null,
       "cover": null,
+      "people": [
+        { "id": "rafa", "name": "Rafa", "skills": ["Baixo", "Guitarra", "Teclado", "Loops", "Violão", "Voz"] },
+        { "id": "olivia", "name": "Olivia", "skills": ["Voz", "Violão nylon"] },
+        { "id": "melao", "name": "Melão", "skills": ["Guitarra"] },
+        { "id": "sacha", "name": "Sacha", "skills": ["Percussão"] },
+        { "id": "tiago", "name": "Tiago Torres", "skills": ["Bateria"] },
+        { "id": "paoli", "name": "Antonio Paoli", "skills": ["Piano", "Guitarra"] },
+        { "id": "bruno", "name": "Bruno", "skills": ["Bateria"] },
+        { "id": "marcito", "name": "Marcito", "skills": ["Percussão"] }
+      ],
+      "stages": [
+        { "id": "composicao", "label": "Composição", "mode": "holistic" },
+        { "id": "gravacao", "label": "Gravação", "mode": "instruments" },
+        { "id": "edicao", "label": "Edição", "mode": "instruments" },
+        { "id": "premix", "label": "Pré-mix", "mode": "instruments" },
+        { "id": "mix", "label": "Mix", "mode": "instruments" },
+        { "id": "master", "label": "Master", "mode": "holistic" }
+      ],
       "tracks": [
         {
           "id": "heroi-robo",
           "title": "Herói Robô",
-          "notes": "Olivia: voz e violão nylon. Rafa: baixo, guitarra, teclado e loops. Melão: guitarras.",
-          "stages": { "composicao": "done", "gravacao": "done", "edicao": "done", "premix": "done", "mix": "todo", "master": "todo" }
+          "type": "inedita",
+          "composers": ["rafa", "olivia"],
+          "style": "",
+          "bpm": null, "key": "", "duration": "", "references": "",
+          "notes": "Primeira faixa fechada de ponta a ponta na produção.",
+          "instruments": [
+            { "id": "i1", "name": "Voz", "personId": "olivia", "used": true },
+            { "id": "i2", "name": "Violão nylon", "personId": "olivia", "used": true },
+            { "id": "i3", "name": "Baixo", "personId": "rafa", "used": true },
+            { "id": "i4", "name": "Guitarra", "personId": "rafa", "used": true },
+            { "id": "i5", "name": "Teclado", "personId": "rafa", "used": true },
+            { "id": "i6", "name": "Loops", "personId": "rafa", "used": true },
+            { "id": "i7", "name": "Guitarras", "personId": "melao", "used": true }
+          ],
+          "stageState": {
+            "composicao": { "status": "done", "note": "" },
+            "gravacao": { "signedOff": true, "note": "", "items": { "i1": {"check": true}, "i2": {"check": true}, "i3": {"check": true}, "i4": {"check": true}, "i5": {"check": true}, "i6": {"check": true}, "i7": {"check": true} } },
+            "edicao": { "signedOff": true, "note": "", "items": { "i1": {"check": true}, "i2": {"check": true}, "i3": {"check": true}, "i4": {"check": true}, "i5": {"check": true}, "i6": {"check": true}, "i7": {"check": true} } },
+            "premix": { "signedOff": true, "note": "", "items": { "i1": {"check": true}, "i2": {"check": true}, "i3": {"check": true}, "i4": {"check": true}, "i5": {"check": true}, "i6": {"check": true}, "i7": {"check": true} } },
+            "mix": { "signedOff": false, "note": "", "items": {} },
+            "master": { "status": "todo", "note": "" }
+          }
         },
         {
           "id": "ateus-gracas-a-deus",
           "title": "Ateus graças a deus",
-          "notes": "Rafa + Olivia. Olivia: voz principal. Rafa: backing, violões, baixo, guitarra e teclado. Sacha: percussão. Verificar se o arranjo está fechado.",
-          "stages": { "composicao": "done", "gravacao": "done", "edicao": "wip", "premix": "wip", "mix": "todo", "master": "todo" }
+          "type": "inedita",
+          "composers": ["rafa", "olivia"],
+          "style": "",
+          "bpm": null, "key": "", "duration": "", "references": "",
+          "notes": "Verificar se o arranjo está fechado.",
+          "instruments": [
+            { "id": "i1", "name": "Voz principal", "personId": "olivia", "used": true },
+            { "id": "i2", "name": "Backing vocal", "personId": "rafa", "used": true },
+            { "id": "i3", "name": "Violões", "personId": "rafa", "used": true },
+            { "id": "i4", "name": "Baixo", "personId": "rafa", "used": true },
+            { "id": "i5", "name": "Guitarra", "personId": "rafa", "used": true },
+            { "id": "i6", "name": "Teclado", "personId": "rafa", "used": true },
+            { "id": "i7", "name": "Percussão", "personId": "sacha", "used": true }
+          ],
+          "stageState": {
+            "composicao": { "status": "done", "note": "" },
+            "gravacao": { "signedOff": true, "note": "", "items": { "i1": {"check": true}, "i2": {"check": true}, "i3": {"check": true}, "i4": {"check": true}, "i5": {"check": true}, "i6": {"check": true}, "i7": {"check": true} } },
+            "edicao": { "signedOff": false, "note": "", "items": { "i1": {"check": true}, "i2": {"check": true}, "i3": {"check": true}, "i4": {"check": true}, "i5": {"check": true}, "i6": {"check": true}, "i7": {"check": true} } },
+            "premix": { "signedOff": false, "note": "", "items": { "i1": {"check": true}, "i2": {"check": true}, "i3": {"check": true}, "i4": {"check": true}, "i5": {"check": true}, "i6": {"check": true}, "i7": {"check": true} } },
+            "mix": { "signedOff": false, "note": "", "items": {} },
+            "master": { "status": "todo", "note": "" }
+          }
         },
         {
           "id": "nada-melhor-que-um-violao",
           "title": "Nada melhor que um violão",
-          "notes": "Rafa: vozes, violões, baixo, guitarra, teclado e loops. Olivia precisa cantar. Avaliar solo de guitarra do Melão.",
-          "stages": { "composicao": "done", "gravacao": "wip", "edicao": "wip", "premix": "wip", "mix": "todo", "master": "todo" }
+          "type": "inedita",
+          "composers": ["rafa", "olivia"],
+          "style": "",
+          "bpm": null, "key": "", "duration": "", "references": "",
+          "notes": "Olivia precisa cantar. Avaliar solo de guitarra do Melão.",
+          "instruments": [
+            { "id": "i1", "name": "Vozes", "personId": "rafa", "used": true },
+            { "id": "i2", "name": "Violões", "personId": "rafa", "used": true },
+            { "id": "i3", "name": "Baixo", "personId": "rafa", "used": true },
+            { "id": "i4", "name": "Guitarra", "personId": "rafa", "used": true },
+            { "id": "i5", "name": "Teclado", "personId": "rafa", "used": true },
+            { "id": "i6", "name": "Loops", "personId": "rafa", "used": true },
+            { "id": "i7", "name": "Voz", "personId": "olivia", "used": true },
+            { "id": "i8", "name": "Guitarra solo", "personId": "melao", "used": true }
+          ],
+          "stageState": {
+            "composicao": { "status": "done", "note": "" },
+            "gravacao": { "signedOff": false, "note": "Falta Olivia cantar; avaliar solo do Melão.", "items": { "i1": {"check": true}, "i2": {"check": true}, "i3": {"check": true}, "i4": {"check": true}, "i5": {"check": true}, "i6": {"check": true} } },
+            "edicao": { "signedOff": false, "note": "", "items": { "i1": {"check": true}, "i2": {"check": true}, "i3": {"check": true}, "i4": {"check": true}, "i5": {"check": true}, "i6": {"check": true} } },
+            "premix": { "signedOff": false, "note": "", "items": { "i1": {"check": true}, "i2": {"check": true}, "i3": {"check": true}, "i4": {"check": true}, "i5": {"check": true}, "i6": {"check": true} } },
+            "mix": { "signedOff": false, "note": "", "items": {} },
+            "master": { "status": "todo", "note": "" }
+          }
         },
         {
           "id": "certezas",
           "title": "Certezas",
-          "notes": "Rafa: guitarras base e baixo. Olivia: voz. Tiago Torres: bateria. Antonio Paoli: piano e guitarra solo. Avaliar violão nylon base, quais guitarras base aproveitar e backing vocal.",
-          "stages": { "composicao": "done", "gravacao": "wip", "edicao": "wip", "premix": "wip", "mix": "todo", "master": "todo" }
+          "type": "inedita",
+          "composers": ["rafa", "olivia"],
+          "style": "",
+          "bpm": null, "key": "", "duration": "", "references": "",
+          "notes": "Avaliar violão nylon base, quais guitarras base aproveitar e backing vocal.",
+          "instruments": [
+            { "id": "i1", "name": "Guitarras base", "personId": "rafa", "used": true },
+            { "id": "i2", "name": "Baixo", "personId": "rafa", "used": true },
+            { "id": "i3", "name": "Voz", "personId": "olivia", "used": true },
+            { "id": "i4", "name": "Bateria", "personId": "tiago", "used": true },
+            { "id": "i5", "name": "Piano", "personId": "paoli", "used": true },
+            { "id": "i6", "name": "Guitarra solo", "personId": "paoli", "used": true }
+          ],
+          "stageState": {
+            "composicao": { "status": "done", "note": "" },
+            "gravacao": { "signedOff": false, "note": "", "items": { "i1": {"check": true}, "i2": {"check": true}, "i3": {"check": true}, "i4": {"check": true}, "i5": {"check": true}, "i6": {"check": true} } },
+            "edicao": { "signedOff": false, "note": "", "items": { "i1": {"check": true}, "i2": {"check": true}, "i3": {"check": true}, "i4": {"check": true}, "i5": {"check": true}, "i6": {"check": true} } },
+            "premix": { "signedOff": false, "note": "", "items": { "i1": {"check": true}, "i2": {"check": true}, "i3": {"check": true}, "i4": {"check": true}, "i5": {"check": true}, "i6": {"check": true} } },
+            "mix": { "signedOff": false, "note": "", "items": {} },
+            "master": { "status": "todo", "note": "" }
+          }
         },
         {
           "id": "nao-vejo-a-hora",
           "title": "Não vejo a hora",
-          "notes": "Rafa: voz, guitarra, violão, baixo e loops. Avaliar regravar loops com percussão analógica (Sacha ou Marcito). Avaliar subir 3 semitons para Olivia cantar.",
-          "stages": { "composicao": "done", "gravacao": "wip", "edicao": "wip", "premix": "wip", "mix": "todo", "master": "todo" }
+          "type": "inedita",
+          "composers": ["rafa", "olivia"],
+          "style": "",
+          "bpm": null, "key": "", "duration": "", "references": "",
+          "notes": "Avaliar regravar loops com percussão analógica (Sacha ou Marcito). Avaliar subir 3 semitons para Olivia cantar.",
+          "instruments": [
+            { "id": "i1", "name": "Voz", "personId": "rafa", "used": true },
+            { "id": "i2", "name": "Guitarra", "personId": "rafa", "used": true },
+            { "id": "i3", "name": "Violão", "personId": "rafa", "used": true },
+            { "id": "i4", "name": "Baixo", "personId": "rafa", "used": true },
+            { "id": "i5", "name": "Loops", "personId": "rafa", "used": true }
+          ],
+          "stageState": {
+            "composicao": { "status": "done", "note": "" },
+            "gravacao": { "signedOff": false, "note": "", "items": { "i1": {"check": true}, "i2": {"check": true}, "i3": {"check": true}, "i4": {"check": true}, "i5": {"check": true} } },
+            "edicao": { "signedOff": false, "note": "", "items": { "i1": {"check": true}, "i2": {"check": true}, "i3": {"check": true}, "i4": {"check": true}, "i5": {"check": true} } },
+            "premix": { "signedOff": false, "note": "", "items": { "i1": {"check": true}, "i2": {"check": true}, "i3": {"check": true}, "i4": {"check": true}, "i5": {"check": true} } },
+            "mix": { "signedOff": false, "note": "", "items": {} },
+            "master": { "status": "todo", "note": "" }
+          }
         },
         {
           "id": "barco-errante",
           "title": "Barco errante",
-          "notes": "Rafa: violão e voz. Melão: guitarra solo. Sacha: percussão. Gravar baixo. Avaliar regravar violão adaptado ao arranjo multi-instrumental.",
-          "stages": { "composicao": "done", "gravacao": "wip", "edicao": "wip", "premix": "wip", "mix": "todo", "master": "todo" }
+          "type": "inedita",
+          "composers": ["rafa", "olivia"],
+          "style": "",
+          "bpm": null, "key": "", "duration": "", "references": "",
+          "notes": "Gravar baixo. Avaliar regravar violão adaptado ao arranjo multi-instrumental.",
+          "instruments": [
+            { "id": "i1", "name": "Violão", "personId": "rafa", "used": true },
+            { "id": "i2", "name": "Voz", "personId": "rafa", "used": true },
+            { "id": "i3", "name": "Guitarra solo", "personId": "melao", "used": true },
+            { "id": "i4", "name": "Percussão", "personId": "sacha", "used": true },
+            { "id": "i5", "name": "Baixo", "personId": "rafa", "used": true }
+          ],
+          "stageState": {
+            "composicao": { "status": "done", "note": "" },
+            "gravacao": { "signedOff": false, "note": "Falta gravar o baixo.", "items": { "i1": {"check": true}, "i2": {"check": true}, "i3": {"check": true}, "i4": {"check": true} } },
+            "edicao": { "signedOff": false, "note": "", "items": { "i1": {"check": true}, "i2": {"check": true}, "i3": {"check": true}, "i4": {"check": true} } },
+            "premix": { "signedOff": false, "note": "", "items": { "i1": {"check": true}, "i2": {"check": true}, "i3": {"check": true}, "i4": {"check": true} } },
+            "mix": { "signedOff": false, "note": "", "items": {} },
+            "master": { "status": "todo", "note": "" }
+          }
         },
         {
           "id": "estranho-na-se",
           "title": "Estranho na Sé",
-          "notes": "Olivia: voz. Rafa: violão. Avaliar chamar Bruno para bateria.",
-          "stages": { "composicao": "done", "gravacao": "wip", "edicao": "todo", "premix": "todo", "mix": "todo", "master": "todo" }
+          "type": "inedita",
+          "composers": ["rafa", "olivia"],
+          "style": "",
+          "bpm": null, "key": "", "duration": "", "references": "",
+          "notes": "Avaliar chamar Bruno para bateria.",
+          "instruments": [
+            { "id": "i1", "name": "Voz", "personId": "olivia", "used": true },
+            { "id": "i2", "name": "Violão", "personId": "rafa", "used": true },
+            { "id": "i3", "name": "Bateria", "personId": "bruno", "used": true }
+          ],
+          "stageState": {
+            "composicao": { "status": "done", "note": "" },
+            "gravacao": { "signedOff": false, "note": "Avaliar chamar Bruno para bateria.", "items": { "i1": {"check": true}, "i2": {"check": true} } },
+            "edicao": { "signedOff": false, "note": "", "items": {} },
+            "premix": { "signedOff": false, "note": "", "items": {} },
+            "mix": { "signedOff": false, "note": "", "items": {} },
+            "master": { "status": "todo", "note": "" }
+          }
         },
         {
           "id": "stalker",
           "title": "Stalker",
-          "notes": "Olivia: voz. Rafa: violão. Avaliar chamar Bruno para bateria.",
-          "stages": { "composicao": "done", "gravacao": "wip", "edicao": "todo", "premix": "todo", "mix": "todo", "master": "todo" }
+          "type": "inedita",
+          "composers": ["rafa", "olivia"],
+          "style": "",
+          "bpm": null, "key": "", "duration": "", "references": "",
+          "notes": "Avaliar chamar Bruno para bateria.",
+          "instruments": [
+            { "id": "i1", "name": "Voz", "personId": "olivia", "used": true },
+            { "id": "i2", "name": "Violão", "personId": "rafa", "used": true },
+            { "id": "i3", "name": "Bateria", "personId": "bruno", "used": true }
+          ],
+          "stageState": {
+            "composicao": { "status": "done", "note": "" },
+            "gravacao": { "signedOff": false, "note": "Avaliar chamar Bruno para bateria.", "items": { "i1": {"check": true}, "i2": {"check": true} } },
+            "edicao": { "signedOff": false, "note": "", "items": {} },
+            "premix": { "signedOff": false, "note": "", "items": {} },
+            "mix": { "signedOff": false, "note": "", "items": {} },
+            "master": { "status": "todo", "note": "" }
+          }
         },
         {
           "id": "br101",
           "title": "BR101",
-          "notes": "Rafa + Olivia. Falta finalizar a música; o final ainda não está definido. Avaliar chamar Bruno para bateria.",
-          "stages": { "composicao": "wip", "gravacao": "wip", "edicao": "todo", "premix": "todo", "mix": "todo", "master": "todo" }
+          "type": "inedita",
+          "composers": ["rafa", "olivia"],
+          "style": "",
+          "bpm": null, "key": "", "duration": "", "references": "",
+          "notes": "Falta finalizar a música; o final ainda não está definido. Avaliar chamar Bruno para bateria.",
+          "instruments": [
+            { "id": "i1", "name": "Voz", "personId": "olivia", "used": true },
+            { "id": "i2", "name": "Violão", "personId": "rafa", "used": true },
+            { "id": "i3", "name": "Bateria", "personId": "bruno", "used": true }
+          ],
+          "stageState": {
+            "composicao": { "status": "wip", "note": "Final ainda não definido." },
+            "gravacao": { "signedOff": false, "note": "", "items": { "i1": {"check": true}, "i2": {"check": true} } },
+            "edicao": { "signedOff": false, "note": "", "items": {} },
+            "premix": { "signedOff": false, "note": "", "items": {} },
+            "mix": { "signedOff": false, "note": "", "items": {} },
+            "master": { "status": "todo", "note": "" }
+          }
         }
       ]
     }
