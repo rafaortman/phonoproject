@@ -1,0 +1,69 @@
+{
+  "version": 1,
+  "projects": [
+    {
+      "id": "blague-ii",
+      "title": "Blague II",
+      "artist": "Blague",
+      "createdAt": "2026-08-11",
+      "targetDate": null,
+      "cover": null,
+      "tracks": [
+        {
+          "id": "heroi-robo",
+          "title": "Herói Robô",
+          "notes": "Olivia: voz e violão nylon. Rafa: baixo, guitarra, teclado e loops. Melão: guitarras.",
+          "stages": { "composicao": "done", "gravacao": "done", "edicao": "done", "premix": "done", "mix": "todo", "master": "todo" }
+        },
+        {
+          "id": "ateus-gracas-a-deus",
+          "title": "Ateus graças a deus",
+          "notes": "Rafa + Olivia. Olivia: voz principal. Rafa: backing, violões, baixo, guitarra e teclado. Sacha: percussão. Verificar se o arranjo está fechado.",
+          "stages": { "composicao": "done", "gravacao": "done", "edicao": "wip", "premix": "wip", "mix": "todo", "master": "todo" }
+        },
+        {
+          "id": "nada-melhor-que-um-violao",
+          "title": "Nada melhor que um violão",
+          "notes": "Rafa: vozes, violões, baixo, guitarra, teclado e loops. Olivia precisa cantar. Avaliar solo de guitarra do Melão.",
+          "stages": { "composicao": "done", "gravacao": "wip", "edicao": "wip", "premix": "wip", "mix": "todo", "master": "todo" }
+        },
+        {
+          "id": "certezas",
+          "title": "Certezas",
+          "notes": "Rafa: guitarras base e baixo. Olivia: voz. Tiago Torres: bateria. Antonio Paoli: piano e guitarra solo. Avaliar violão nylon base, quais guitarras base aproveitar e backing vocal.",
+          "stages": { "composicao": "done", "gravacao": "wip", "edicao": "wip", "premix": "wip", "mix": "todo", "master": "todo" }
+        },
+        {
+          "id": "nao-vejo-a-hora",
+          "title": "Não vejo a hora",
+          "notes": "Rafa: voz, guitarra, violão, baixo e loops. Avaliar regravar loops com percussão analógica (Sacha ou Marcito). Avaliar subir 3 semitons para Olivia cantar.",
+          "stages": { "composicao": "done", "gravacao": "wip", "edicao": "wip", "premix": "wip", "mix": "todo", "master": "todo" }
+        },
+        {
+          "id": "barco-errante",
+          "title": "Barco errante",
+          "notes": "Rafa: violão e voz. Melão: guitarra solo. Sacha: percussão. Gravar baixo. Avaliar regravar violão adaptado ao arranjo multi-instrumental.",
+          "stages": { "composicao": "done", "gravacao": "wip", "edicao": "wip", "premix": "wip", "mix": "todo", "master": "todo" }
+        },
+        {
+          "id": "estranho-na-se",
+          "title": "Estranho na Sé",
+          "notes": "Olivia: voz. Rafa: violão. Avaliar chamar Bruno para bateria.",
+          "stages": { "composicao": "done", "gravacao": "wip", "edicao": "todo", "premix": "todo", "mix": "todo", "master": "todo" }
+        },
+        {
+          "id": "stalker",
+          "title": "Stalker",
+          "notes": "Olivia: voz. Rafa: violão. Avaliar chamar Bruno para bateria.",
+          "stages": { "composicao": "done", "gravacao": "wip", "edicao": "todo", "premix": "todo", "mix": "todo", "master": "todo" }
+        },
+        {
+          "id": "br101",
+          "title": "BR101",
+          "notes": "Rafa + Olivia. Falta finalizar a música; o final ainda não está definido. Avaliar chamar Bruno para bateria.",
+          "stages": { "composicao": "wip", "gravacao": "wip", "edicao": "todo", "premix": "todo", "mix": "todo", "master": "todo" }
+        }
+      ]
+    }
+  ]
+}

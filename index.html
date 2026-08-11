@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Controle Fonográfico</title>
+  <meta name="description" content="Dashboard de acompanhamento de produção de projetos fonográficos (single / EP / álbum).">
+  <link rel="stylesheet" href="assets/styles.css">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎛️</text></svg>">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand" id="brand">
+      <div class="logo">🎛️</div>
+      <div>
+        <h1>Controle Fonográfico</h1>
+        <small>Acompanhamento de produção · single · EP · álbum</small>
+      </div>
+    </div>
+    <div class="toolbar">
+      <button class="btn ghost small" id="btn-reset" title="Recarregar dados do arquivo do repositório">↺ Recarregar</button>
+      <button class="btn ghost small" id="btn-import">Importar</button>
+      <button class="btn ghost small" id="btn-export">Exportar JSON</button>
+      <button class="btn primary" id="btn-new">+ Novo projeto</button>
+    </div>
+  </header>
+
+  <main class="container" id="app"><!-- render target --></main>
+
+  <script src="assets/app.js"></script>
+</body>
+</html>
