@@ -740,7 +740,7 @@ function renderTrack(p, t) {
           ? t.stages.map(s => renderStage(p, t, s)).join("")
           : `<div class="instr-empty">Nenhuma etapa ainda. Crie a primeira abaixo.</div>`}</div>
         <div class="add-stage-bar">
-          <button class="btn ghost small icon-btn" data-add-stage>${icon("plus")} etapa</button>
+          <button class="btn ghost icon-btn" data-add-stage>${icon("plus")} Etapa</button>
         </div>
       </div>
     </section>
@@ -952,11 +952,11 @@ function renderStage(p, t, stage) {
     </div>
     <div class="stage-body">
       <div class="instr-list">${body || `<div class="instr-empty">${esc(meter)}</div>`}</div>
-      ${isFirst ? `<button class="btn ghost small add-instr icon-btn" data-add-instr>${icon("plus")} instrumento</button>` : ""}
+      ${isFirst ? `<button class="btn ghost add-instr icon-btn" data-add-instr>${icon("plus")} Instrumento</button>` : ""}
       <div class="meter-row"><span class="meter">${rows.length ? esc(meter) : ""}</span></div>
       <textarea class="stage-note" data-stage-note placeholder="Nota geral da etapa…">${esc(st.note || "")}</textarea>
       <div class="sign-row">
-        <button class="btn sign icon-btn ${st.signedOff ? "primary" : (allDone ? "primary pulse" : "ghost")}" data-sign>${icon("check")} Concluída</button>
+        <button class="btn sign icon-btn ${st.signedOff ? "done" : (allDone ? "ghost pulse" : "ghost")}" data-sign>${icon("check")} ${st.signedOff ? "Concluída" : "Concluir"}</button>
       </div>
     </div>
   </section>`;
@@ -1255,11 +1255,11 @@ function updateChrome() {
   const slot = document.getElementById("authslot");
   const sess = api.session();
   if (api.isLoggedIn() && sess && isSynced()) {
-    slot.innerHTML = `<span class="who">${esc(sess.name || sess.username)}</span><span class="sync" id="sync"></span><button class="btn ghost small" data-act="logout">Sair</button>`;
+    slot.innerHTML = `<span class="who">${esc(sess.name || sess.username)}</span><span class="sync" id="sync"></span><button class="btn ghost" data-act="logout">Sair</button>`;
   } else if (api.isLoggedIn() && sess) {
-    slot.innerHTML = `<span class="who">${esc(sess.name || sess.username)}</span><span class="sync" id="sync"></span><span class="chip-local">não sincronizado</span><button class="btn ghost small" data-act="logout">Sair</button>`;
+    slot.innerHTML = `<span class="who">${esc(sess.name || sess.username)}</span><span class="sync" id="sync"></span><span class="chip-local">não sincronizado</span><button class="btn ghost" data-act="logout">Sair</button>`;
   } else {
-    slot.innerHTML = `<button class="btn ghost small" data-act="login">Entrar</button>`;
+    slot.innerHTML = `<button class="btn ghost" data-act="login">Entrar</button>`;
   }
   slot.querySelectorAll("[data-act]").forEach(b => b.addEventListener("click", () => {
     const a = b.dataset.act;
