@@ -346,7 +346,6 @@ button {
   justify-content: space-between;
   gap: 20px;
   margin-bottom: 8px;
-  flex-wrap: wrap;
 }
 
 .detail-head h2 {
@@ -764,7 +763,6 @@ button {
 
 .track-row {
   display: flex;
-  align-items: center;
   gap: 14px;
   background: var(--bg-elev);
   border: 1px solid var(--border);
@@ -957,7 +955,7 @@ button {
   background: var(--bg-elev);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: 16px 18px;
+  padding: 16px;
   border-top: 3px solid var(--border);
   /* stripe de status */
 }
@@ -1003,7 +1001,6 @@ button {
 /* controles do cabeçalho: ↑ ↓ × */
 .stage-ctrls {
   display: flex;
-  align-items: center;
   gap: 2px;
   flex-shrink: 0;
 }
@@ -1109,7 +1106,6 @@ button {
   border: none;
   color: var(--text-faint);
   cursor: pointer;
-  padding: 4px;
   line-height: 1;
   display: inline-flex;
   border-radius: 6px;
@@ -1138,7 +1134,6 @@ button {
   background: none;
   border: none;
   cursor: pointer;
-  padding: 4px;
   display: inline-flex;
   flex-shrink: 0;
   color: #6b7280;
@@ -1615,4 +1610,14 @@ button {
   .instr-row > .instr-note { grid-area: note; min-width: 0; }
   .instr-row > .row-x,
   .instr-row > span:last-child { grid-area: del; }
+
+  .stages {
+    gap: 0;
+  }
+
+  .stage-card {
+    width: calc(100% + 32px);
+    margin-left: -16px;
+    border-radius: 0;
+  }
 }
