@@ -1,10 +1,9 @@
 /* ==========================================================================
-   Dashboard de Projeto Fonográfico — v2
-   Site estático (GitHub Pages). Estado inicial: data/projects.json.
-   Edições em localStorage. Export/Import move dados de volta ao repo.
+   Dashboard de Projeto Fonográfico — v4
+   Site estático (GitHub Pages), com modo local e sincronização por conta.
 
    Modelo:
-   - Projeto: people[], stages[] (configurável), tracks[].
+   - Projeto: people[], tracks[].
    - Etapa (stage): { id, label, mode: "holistic" | "instruments" }.
        Os rótulos são só sugestões — nenhum comportamento é amarrado ao nome.
    - Faixa (track): ficha + instruments[] (arranjo) + stageState por etapa.
@@ -18,10 +17,9 @@
 
 const LS_KEY = "fono-dashboard-v2";
 const LS_OWNER = "fono-owner"; // username dono do db local (sincronizado); ausente = local/convidado
+const ROUTE_KEY = "fono-route"; // sessionStorage: persiste somente durante a vida da aba
 
 const DEFAULT_STAGES = [
-  { id: "composicao", label: "Composição", mode: "holistic" },
-  { id: "gravacao",   label: "Gravação",   mode: "instruments" },
   { id: "edicao",     label: "Edição",     mode: "instruments" },
   { id: "premix",     label: "Pré-mix",    mode: "instruments" },
   { id: "mix",        label: "Mix",        mode: "instruments" },
@@ -66,24 +64,51 @@ const collapsedStages = new Set(); // etapas recolhidas (accordion) — estado d
 const expandedPeople = new Set();  // músicos expandidos; começam TODOS recolhidos
 let tracksSectionOpen = true;
 let peopleSectionOpen = false;
+let trackInfoOpen = true;
+let stagesSectionOpen = true;
 const MAX_PROJECTS = 3;
 
 /* ---------- Persistence ---------- */
 // Etapas passaram a ser da faixa: cada faixa herda uma cópia própria das etapas
 // que eram do projeto (preserva stageState, que já vivia na faixa).
 function migrate() {
-  let changed = db.version !== 3;
+  const upgradingToV4 = (+db.version || 0) < 4;
+  let changed = db.version !== 4;
   (db.projects || []).forEach(p => {
     (p.tracks || []).forEach(t => {
       if (!Array.isArray(t.stages)) { t.stages = p.stages ? JSON.parse(JSON.stringify(p.stages)) : []; changed = true; }
       if (!t.stageState) { t.stageState = {}; changed = true; }
+      if (!Array.isArray(t.rejectedStageLabels)) { t.rejectedStageLabels = []; changed = true; }
       if (!Array.isArray(t.producers)) { t.producers = []; changed = true; }
       if (typeof t.lyricsChord !== "string") { t.lyricsChord = ""; changed = true; }
+      if (t.lyricsChordHeight != null && (!Number.isFinite(+t.lyricsChordHeight) || +t.lyricsChordHeight < 80 || +t.lyricsChordHeight > 2000)) {
+        delete t.lyricsChordHeight; changed = true;
+      }
       if (Object.prototype.hasOwnProperty.call(t, "references")) { delete t.references; changed = true; }
+      if (upgradingToV4) {
+        const compositionIndex = t.stages.findIndex(s => s.id === "composicao" || (s.label || "").trim().toLowerCase() === "composição");
+        if (compositionIndex >= 0) {
+          const composition = t.stages[compositionIndex];
+          t.stages.splice(compositionIndex, 1);
+          delete t.stageState[composition.id];
+          changed = true;
+        }
+      }
+      if (Object.prototype.hasOwnProperty.call(t, "compositionStatus")) { delete t.compositionStatus; changed = true; }
+      if (Object.prototype.hasOwnProperty.call(t, "compositionNote")) { delete t.compositionNote; changed = true; }
+      if (upgradingToV4 && !t.baseStageId) {
+        const recording = t.stages.find(s => s.id === "gravacao" || (s.label || "").trim().toLowerCase() === "gravação");
+        if (recording) { t.baseStageId = recording.id; changed = true; }
+      }
+      const baseIndex = t.stages.findIndex(s => s.id === t.baseStageId);
+      if (baseIndex > 0) {
+        const base = t.stages.splice(baseIndex, 1)[0];
+        t.stages.unshift(base); changed = true;
+      }
     });
     if (Object.prototype.hasOwnProperty.call(p, "stages")) { delete p.stages; changed = true; }
   });
-  db.version = 3;
+  db.version = 4;
   return changed;
 }
 // Salva no cache local sempre; no servidor (debounce ~1,5s) só se logado E sincronizado.
@@ -108,11 +133,19 @@ function slugify(s) {
   return (s || "").toString().toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "")
     .replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
 }
+let syncHideTimer = null;
 function setSync(state) {
   const el = document.getElementById("sync");
   if (!el) return;
+  clearTimeout(syncHideTimer);
   el.className = "sync " + state;
   el.textContent = state === "saving" ? "salvando…" : state === "saved" ? "salvo ✓" : state === "error" ? "erro ao salvar" : "";
+  if (state === "saved" || state === "error") {
+    syncHideTimer = setTimeout(() => {
+      el.className = "sync";
+      el.textContent = "";
+    }, state === "saved" ? 2500 : 5000);
+  }
 }
 
 /* ---------- Images (client-side downscale → data URI) ---------- */
@@ -225,7 +258,8 @@ function instrStages(track) { return (track.stages || []).filter(s => s.mode ===
 // Próxima etapa da sequência padrão ainda não usada na faixa (rótulo editável depois)
 function suggestNextStage(track) {
   const used = new Set((track.stages || []).map(s => (s.label || "").toLowerCase()));
-  const next = DEFAULT_STAGES.find(d => !used.has(d.label.toLowerCase()));
+  const rejected = new Set((track.rejectedStageLabels || []).map(s => (s || "").trim().toLowerCase()));
+  const next = DEFAULT_STAGES.find(d => !used.has(d.label.toLowerCase()) && !rejected.has(d.label.toLowerCase()));
   return next
     ? { id: uid(next.id), label: next.label, mode: next.mode }
     : { id: uid("etapa"), label: "Nova etapa", mode: "holistic" };
@@ -243,48 +277,12 @@ function stageItems(p, track, stageId) {
   });
 }
 
-function stageProgress(p, track, stage) {
-  const st = ensureState(track, stage);
-  if (stage.mode === "holistic") return st.status === "done" ? 1 : st.status === "wip" ? 0.5 : 0;
-  if (st.signedOff) return 1;
-  const rows = stageItems(p, track, stage.id);
-  if (!rows.length) return 0;
-  const val = rows.reduce((a, r) => a + (r.state === "done" ? 1 : r.state === "wip" ? 0.5 : 0), 0);
-  return (val / rows.length) * 0.95;
-}
 function stageStatus(p, track, stage) {
   const st = ensureState(track, stage);
   if (stage.mode === "holistic") return st.status || "todo";
   if (st.signedOff) return "done";
   const rows = stageItems(p, track, stage.id);
   return rows.some(r => r.state !== "todo") ? "wip" : "todo";
-}
-function trackProgress(p, track) {
-  const stages = track.stages || [];
-  if (!stages.length) return 0;
-  return stages.reduce((s, st) => s + stageProgress(p, track, st), 0) / stages.length;
-}
-// Barra de uma única faixa, sobre as etapas dela
-function trackBar(p, t) {
-  let total = 0, done = 0, partial = 0;
-  for (const s of (t.stages || [])) {
-    total++;
-    const pr = stageProgress(p, t, s);
-    if (pr >= 1) done++; else partial += pr;
-  }
-  if (!total) return { pct: 0, donePct: 0, wipPct: 0 };
-  return { pct: Math.round((done + partial) / total * 100), donePct: done / total * 100, wipPct: partial / total * 100 };
-}
-// Barra geral do projeto: soma cada faixa sobre as etapas próprias dela
-function projectBar(p) {
-  let total = 0, done = 0, partial = 0;
-  for (const t of p.tracks) for (const s of (t.stages || [])) {
-    total++;
-    const pr = stageProgress(p, t, s);
-    if (pr >= 1) done++; else partial += pr;
-  }
-  if (!total) return { pct: 0, donePct: 0, wipPct: 0 };
-  return { pct: Math.round((done + partial) / total * 100), donePct: done / total * 100, wipPct: partial / total * 100 };
 }
 
 /* ---------- Rendering ---------- */
@@ -295,12 +293,25 @@ function render() {
   const p = route.projectId ? getProject(route.projectId) : null;
   if (route.view === "track" && p) { const t = getTrack(p, route.trackId); if (t) return renderTrack(p, t); }
   if (route.view === "project" && p) return renderProject(p);
-  route = { view: "home" }; renderHome();
+  route = { view: "home" }; rememberRoute(); renderHome();
+}
+function rememberRoute() { sessionStorage.setItem(ROUTE_KEY, JSON.stringify(route)); }
+function restoredRoute() {
+  let saved;
+  try { saved = JSON.parse(sessionStorage.getItem(ROUTE_KEY) || "null"); } catch (e) { return { view: "home" }; }
+  if (!saved || !["home", "project", "track"].includes(saved.view)) return { view: "home" };
+  if (saved.view === "home") return { view: "home" };
+  const p = getProject(saved.projectId);
+  if (!p) return { view: "home" };
+  if (saved.view === "project") return { view: "project", projectId: p.id };
+  const t = getTrack(p, saved.trackId);
+  return t ? { view: "track", projectId: p.id, trackId: t.id } : { view: "project", projectId: p.id };
 }
 // Navegação: empurra uma entrada no histórico do navegador e sobe o scroll.
 // (Só a navegação sobe o scroll — re-renders internos usam render()/rt() e não sobem.)
 function navTo(r) {
   route = r;
+  rememberRoute();
   history.pushState(r, "");
   render();
   window.scrollTo(0, 0);
@@ -312,19 +323,17 @@ function goProject(id) {
   expandedPeople.clear();
   navTo({ view: "project", projectId: id });
 }
-function goTrack(pid, tid) { navTo({ view: "track", projectId: pid, trackId: tid }); }
+function goTrack(pid, tid) {
+  trackInfoOpen = true;
+  stagesSectionOpen = true;
+  navTo({ view: "track", projectId: pid, trackId: tid });
+}
 window.addEventListener("popstate", e => {
   route = e.state || { view: "home" };
+  rememberRoute();
   render();
   window.scrollTo(0, 0);
 });
-
-function progressBar(bar) {
-  return `<div class="progress">
-      <div class="seg-done" style="width:${bar.donePct}%"></div>
-      <div class="seg-wip" style="width:${bar.wipPct}%"></div>
-    </div>`;
-}
 
 /* ----- Home ----- */
 function renderHome() {
@@ -352,7 +361,7 @@ function renderHome() {
     ${contextBox()}
     <div class="section-head"><h2>Meus projetos</h2>
       <span class="count">${db.projects.length} projeto${db.projects.length === 1 ? "" : "s"}</span></div>
-    <div class="grid">${newCard}${cards}</div>`;
+    <div class="grid">${cards}${newCard}</div>`;
 
   wireContextBox();
   app.querySelectorAll("[data-open]").forEach(el => el.addEventListener("click", () => goProject(el.dataset.open)));
@@ -365,10 +374,12 @@ function renderProject(p) {
   const nominal = projectNominal(p);
   const rows = p.tracks.map((t, i) => {
     const pend = nextAction(p, t);
+    const authors = (t.composers || []).map(id => personName(p, id)).filter(Boolean).join(", ");
     return `<div class="track-row" data-track="${t.id}">
         <span class="num">${i + 1}</span>
         <div class="track-row-main">
           <div class="track-row-title">${esc(t.title) || "<span class='faint'>Sem título</span>"}</div>
+          ${authors ? `<div class="track-authors">De: ${esc(authors)}</div>` : ""}
           <div class="track-row-sub">${esc(pend || "—")}</div>
         </div>
         <div class="stage-ctrls">
@@ -400,18 +411,17 @@ function renderProject(p) {
         <button class="btn danger del-btn" data-del-project title="Excluir projeto">${icon("can")}</button>
       </div>
     </div>
-    <div class="overall-box">
-      <div class="overall-title">Estado geral</div>
+    <div class="project-status-summary">
       ${nominal.length
         ? `<div class="nominal">${nominal.map(b => `<div class="nominal-row"><b>${b.count}</b><span>${esc(b.label)}</span></div>`).join("")}</div>`
         : `<div class="faint">Sem faixas ainda.</div>`}
     </div>
 
-    <div class="field proj-notes"><label>Observações do projeto</label>
-      <textarea class="stage-note" data-proj-notes placeholder="Notas, decisões e pendências do projeto…">${esc(p.notes || "")}</textarea></div>
+    <div class="field proj-notes">
+      <textarea class="stage-note" data-proj-notes placeholder="Notas, decisões e pendências do projeto…" aria-label="Observações do projeto">${esc(p.notes || "")}</textarea></div>
 
     <div class="elenco section-accordion${peopleSectionOpen ? "" : " collapsed"}">
-      <button class="elenco-head section-accordion-head" data-section="people">${icon("chevron", peopleSectionOpen ? "" : "rot-right")}<span>Músicos <span class="count">${(p.people || []).length}</span></span></button>
+      <h3 class="section-heading"><button class="section-accordion-head" data-section="people">${icon("chevron", peopleSectionOpen ? "" : "rot-right")}<span>Músicos <span class="count">${(p.people || []).length}</span></span></button></h3>
       <div class="section-accordion-body">
       <div class="people-list">
         ${(p.people || []).map((x, i, arr) => `
@@ -443,11 +453,11 @@ function renderProject(p) {
     </div>
 
     <div class="elenco section-accordion${tracksSectionOpen ? "" : " collapsed"}">
-      <button class="elenco-head section-accordion-head" data-section="tracks">${icon("chevron", tracksSectionOpen ? "" : "rot-right")}<span>Faixas <span class="count">${p.tracks.length}</span></span></button>
+      <h3 class="section-heading"><button class="section-accordion-head" data-section="tracks">${icon("chevron", tracksSectionOpen ? "" : "rot-right")}<span>Faixas <span class="count">${p.tracks.length}</span></span></button></h3>
       <div class="section-accordion-body">
         ${p.tracks.length ? `<div class="track-list">${rows}</div>` :
           `<div class="empty"><h3>Sem faixas</h3><p>Adicione a primeira faixa deste projeto.</p></div>`}
-        <div class="add-track-bar"><button class="btn primary" data-add-track>+ Adicionar faixa</button></div>
+        <div class="add-track-bar"><button class="btn ghost" data-add-track>+ Adicionar faixa</button></div>
       </div>
     </div>`;
 
@@ -612,17 +622,22 @@ function renderTrack(p, t) {
       </div>
       <button class="btn danger del-btn" data-del-track title="Excluir faixa">${icon("can")}</button>
     </div>
-    <div class="overall-box"><div class="track-situacao">${esc(nextAction(p, t))}</div></div>
+    <section class="track-info section-accordion${trackInfoOpen ? "" : " collapsed"}">
+      <h3 class="section-heading"><button class="section-accordion-head" data-track-info>${icon("chevron", trackInfoOpen ? "" : "rot-right")}<span>Informações gerais</span></button></h3>
+      <div class="section-accordion-body">${renderFicha(p, t)}</div>
+    </section>
 
-    ${renderFicha(p, t)}
-
-    <h3 class="stages-title">Etapas de produção</h3>
-    <div class="stages">${(t.stages || []).length
-      ? t.stages.map(s => renderStage(p, t, s)).join("")
-      : `<div class="instr-empty">Nenhuma etapa ainda. Crie a primeira abaixo.</div>`}</div>
-    <div class="add-stage-bar">
-      <button class="btn ghost small icon-btn" data-add-stage>${icon("plus")} etapa</button>
-    </div>
+    <section class="track-stages section-accordion${stagesSectionOpen ? "" : " collapsed"}">
+      <h3 class="section-heading"><button class="section-accordion-head" data-stages-section>${icon("chevron", stagesSectionOpen ? "" : "rot-right")}<span>Etapas de produção</span></button></h3>
+      <div class="section-accordion-body">
+        <div class="stages">${(t.stages || []).length
+          ? t.stages.map(s => renderStage(p, t, s)).join("")
+          : `<div class="instr-empty">Nenhuma etapa ainda. Crie a primeira abaixo.</div>`}</div>
+        <div class="add-stage-bar">
+          <button class="btn ghost small icon-btn" data-add-stage>${icon("plus")} etapa</button>
+        </div>
+      </div>
+    </section>
 
     <div class="track-nav">
       <button class="ic-btn" data-track-prev title="Faixa anterior" ${prev ? "" : "disabled"}>${icon("left")}</button>
@@ -631,6 +646,7 @@ function renderTrack(p, t) {
     </div>
 
     <div class="track-foot">
+      <button class="btn ghost icon-btn" data-foot-back>${icon("left")} Voltar</button>
       <button class="btn ghost icon-btn" data-new-track>${icon("plus")} Nova faixa</button>
     </div>
 
@@ -741,7 +757,8 @@ function renderFicha(p, t) {
   const producerChips = (t.producers || []).map(id =>
     `<span class="chip">${esc(personName(p, id))}<button data-rm-producer="${id}" title="Remover">×</button></span>`).join("");
   return `<div class="ficha">
-    <div class="field"><label>Compositores</label>
+    <div class="field composition-field">
+      <label>Compositores</label>
       <div class="chips">${compChips}<input class="chip-input" data-add-comp list="people-list" placeholder="Nome" autocomplete="off"><button type="button" class="row-add" data-add-comp-btn title="Adicionar compositor">${icon("plus")}</button></div>
     </div>
     <div class="ficha-grid">
@@ -754,16 +771,17 @@ function renderFicha(p, t) {
       <div class="chips">${producerChips}<input class="chip-input" data-add-producer list="people-list" placeholder="Nome" autocomplete="off"><button type="button" class="row-add" data-add-producer-btn title="Adicionar produtor fonográfico">${icon("plus")}</button></div>
     </div>
     <div class="field"><label>Letra/cifra</label>
-      <textarea class="lyrics-chord" data-f="lyricsChord" placeholder="Letra e cifra…">${esc(t.lyricsChord || "")}</textarea></div>
+      <textarea class="lyrics-chord" data-f="lyricsChord" placeholder="Letra e cifra…"${t.lyricsChordHeight ? ` style="height:${Math.round(+t.lyricsChordHeight)}px"` : ""}>${esc(t.lyricsChord || "")}</textarea></div>
     <div class="field"><label>Observações</label>
       <textarea data-f="notes" placeholder="Pendências e decisões da faixa…">${esc(t.notes)}</textarea></div>
   </div>`;
 }
 
 // Controles do cabeçalho da etapa: subir / descer / remover
-function stageCtrls(idx, n) {
+function stageCtrls(t, stage, idx, n) {
+  if (stage.id === t.baseStageId) return "";
   return `<div class="stage-ctrls">
-    <button class="ic-btn" data-move="up" title="Subir" ${idx === 0 ? "disabled" : ""}>${icon("up")}</button>
+    <button class="ic-btn" data-move="up" title="Subir" ${idx <= (t.baseStageId ? 1 : 0) ? "disabled" : ""}>${icon("up")}</button>
     <button class="ic-btn" data-move="down" title="Descer" ${idx === n - 1 ? "disabled" : ""}>${icon("down")}</button>
     <button class="ic-btn danger" data-stage-del title="Remover etapa">${icon("close")}</button>
   </div>`;
@@ -782,7 +800,7 @@ function renderStage(p, t, stage) {
           <button class="accordion-tri" data-accordion title="Recolher/expandir">${icon("chevron", collapsed ? "rot-right" : "")}</button>
           <input class="stage-name-input" data-stage-rename value="${esc(stage.label)}" size="${Math.max(2, (stage.label || "").length)}" placeholder="Nome da etapa" autocomplete="off">
         </div>
-        ${stageCtrls(idx, t.stages.length)}
+        ${stageCtrls(t, stage, idx, t.stages.length)}
       </div>
       <div class="stage-body">
         <button class="holo-state ${status}" data-cycle title="Alternar estado">${icon(status === "done" ? "check" : status === "wip" ? "pause" : "stop")}<span>${STATE_LABEL[status]}</span></button>
@@ -824,7 +842,7 @@ function renderStage(p, t, stage) {
       <div class="stage-name">
         <button class="accordion-tri" data-accordion title="Recolher/expandir">${icon("chevron", collapsed ? "rot-right" : "")}</button>
         <input class="stage-name-input" data-stage-rename value="${esc(stage.label)}" size="${Math.max(2, (stage.label || "").length)}" placeholder="Nome da etapa" autocomplete="off"></div>
-      ${stageCtrls(idx, t.stages.length)}
+      ${stageCtrls(t, stage, idx, t.stages.length)}
     </div>
     <div class="stage-body">
       <div class="instr-list">${body || `<div class="instr-empty">${esc(meter)}</div>`}</div>
@@ -845,6 +863,11 @@ function wireTrack(p, t) {
   app.querySelector("[data-proj]").addEventListener("click", () => goProject(p.id));
 
   app.querySelector("[data-title]").addEventListener("change", e => { t.title = e.target.value.trim(); save(); });
+  const trackInfo = app.querySelector("[data-track-info]");
+  if (trackInfo) trackInfo.addEventListener("click", () => { trackInfoOpen = !trackInfoOpen; renderTrack(p, t); });
+  const stagesSection = app.querySelector("[data-stages-section]");
+  if (stagesSection) stagesSection.addEventListener("click", () => { stagesSectionOpen = !stagesSectionOpen; renderTrack(p, t); });
+  app.querySelector("[data-foot-back]").addEventListener("click", () => goProject(p.id));
 
   // ficha fields
   app.querySelectorAll("[data-f]").forEach(el => el.addEventListener("change", () => {
@@ -852,6 +875,15 @@ function wireTrack(p, t) {
     t[k] = k === "bpm" ? (el.value.trim() || null) : el.value;
     save();
   }));
+  const lyricsChord = app.querySelector(".lyrics-chord");
+  if (lyricsChord) lyricsChord.addEventListener("pointerdown", () => {
+    const initialHeight = lyricsChord.offsetHeight;
+    const rememberHeight = () => {
+      const height = Math.round(lyricsChord.offsetHeight);
+      if (height !== initialHeight) { t.lyricsChordHeight = Math.max(80, Math.min(2000, height)); save(); }
+    };
+    window.addEventListener("pointerup", rememberHeight, { once: true });
+  });
   // composers
   app.querySelectorAll("[data-rm-comp]").forEach(b => b.addEventListener("click", () => {
     t.composers = (t.composers || []).filter(id => id !== b.dataset.rmComp); save(); rt();
@@ -912,14 +944,23 @@ function wireTrack(p, t) {
     if (rename) {
       rename.addEventListener("input", () => { rename.size = Math.max(2, rename.value.length); });
       rename.addEventListener("change", () => {
-        stage.label = rename.value.trim() || stage.label;
+        const oldLabel = stage.label;
+        const newLabel = rename.value.trim() || oldLabel;
+        if (newLabel.toLowerCase() !== oldLabel.toLowerCase()) {
+          t.rejectedStageLabels = t.rejectedStageLabels || [];
+          if (!t.rejectedStageLabels.some(x => x.toLowerCase() === oldLabel.toLowerCase())) t.rejectedStageLabels.push(oldLabel);
+        }
+        stage.label = newLabel;
         rename.value = stage.label; rename.size = Math.max(2, rename.value.length); save();
       });
     }
 
     const stageDel = card.querySelector("[data-stage-del]");
     if (stageDel) stageDel.addEventListener("click", () => {
+      if (sid === t.baseStageId) return;
       confirmDialog(`Remover a etapa "${stage.label}" desta faixa? O progresso dela será descartado.`, () => {
+        t.rejectedStageLabels = t.rejectedStageLabels || [];
+        if (!t.rejectedStageLabels.some(x => x.toLowerCase() === stage.label.toLowerCase())) t.rejectedStageLabels.push(stage.label);
         t.stages = t.stages.filter(s => s.id !== sid);
         if (t.stageState) delete t.stageState[sid];
         save(); rt();
@@ -930,7 +971,7 @@ function wireTrack(p, t) {
     card.querySelectorAll("[data-move]").forEach(btn => btn.addEventListener("click", () => {
       const i = t.stages.findIndex(s => s.id === sid);
       const j = btn.dataset.move === "up" ? i - 1 : i + 1;
-      if (i < 0 || j < 0 || j >= t.stages.length) return;
+      if (sid === t.baseStageId || i < 0 || j < 0 || j >= t.stages.length || (t.baseStageId && j === 0)) return;
       [t.stages[i], t.stages[j]] = [t.stages[j], t.stages[i]];
       save(); rt();
     }));
@@ -1074,69 +1115,20 @@ function openTrackModal(p) {
   const { b, close } = modal(`
     <h3>Nova faixa</h3>
     <div class="field"><label>Título</label><input id="tk-title" placeholder="Título da faixa" autocomplete="off"></div>
-    <div class="field"><label>Compositores</label>
-      <div class="chips" id="tk-chips"><input class="chip-input" id="tk-comp" list="people-list" placeholder="Nome" autocomplete="off"><button type="button" class="row-add" id="tk-comp-add" title="Adicionar compositor">${icon("plus")}</button></div></div>
-    <div class="field"><label>Estilo / gênero</label><input id="tk-style" placeholder="Opcional"></div>
-    <p class="hint">BPM, tom, duração, referências e instrumentos você preenche na tela da faixa.</p>
-    <div class="modal-actions"><button class="btn ghost" data-cancel>Cancelar</button><button class="btn primary" data-ok>Criar faixa</button></div>
-    ${peopleDatalist(p)}`);
+    <div class="modal-actions"><button class="btn ghost" data-cancel>Cancelar</button><button class="btn primary" data-ok>Criar faixa</button></div>`);
   const title = b.querySelector("#tk-title"); title.focus();
-  const composers = [];
-  const chips = b.querySelector("#tk-chips"); const compInput = b.querySelector("#tk-comp");
-  const redrawChips = () => {
-    chips.querySelectorAll(".chip").forEach(c => c.remove());
-    composers.forEach(id => {
-      const el = document.createElement("span"); el.className = "chip";
-      el.innerHTML = `${esc(personName(p, id))}<button title="Remover">×</button>`;
-      el.querySelector("button").addEventListener("click", () => { composers.splice(composers.indexOf(id), 1); redrawChips(); });
-      chips.insertBefore(el, compInput);
-    });
-  };
-  const addComp = () => {
-    const id = ensurePerson(p, compInput.value);
-    if (id && !composers.includes(id)) composers.push(id);
-    compInput.value = ""; save(); redrawChips(); compInput.focus();
-  };
-  compInput.addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); addComp(); } });
-  b.querySelector("#tk-comp-add").addEventListener("click", addComp);
   b.querySelector("[data-cancel]").addEventListener("click", close);
   const create = () => {
     const tt = title.value.trim(); if (!tt) return title.focus();
     const track = { id: uid(tt), title: tt,
-      composers: composers.slice(), style: b.querySelector("#tk-style").value.trim(),
-      bpm: null, key: "", duration: "", lyricsChord: "", notes: "", producers: [], instruments: [], stages: [], stageState: {} };
+      composers: [], style: "",
+      bpm: null, key: "", duration: "", lyricsChord: "", lyricsChordHeight: null, notes: "", producers: [], instruments: [],
+      baseStageId: "gravacao", stages: [{ id: "gravacao", label: "Gravação", mode: "instruments" }],
+      rejectedStageLabels: [], stageState: { gravacao: { signedOff: false, note: "", items: {} } } };
     p.tracks.push(track); save(); close(); goTrack(p.id, track.id); toast("Faixa criada");
   };
   b.querySelector("[data-ok]").addEventListener("click", create);
-}
-
-/* ---------- Export / Import / Reset ---------- */
-function exportJSON() {
-  const blob = new Blob([JSON.stringify(db, null, 2)], { type: "application/json" });
-  const url = URL.createObjectURL(blob); const a = document.createElement("a");
-  a.href = url; a.download = "projects.json"; a.click(); URL.revokeObjectURL(url);
-  toast("projects.json exportado — commite no repo para salvar");
-}
-function importJSON() {
-  const inp = document.createElement("input"); inp.type = "file"; inp.accept = "application/json,.json";
-  inp.addEventListener("change", () => {
-    const f = inp.files[0]; if (!f) return; const r = new FileReader();
-    r.onload = () => { try { const parsed = JSON.parse(r.result);
-      if (!parsed || !Array.isArray(parsed.projects)) throw new Error("formato inválido");
-      if (parsed.projects.length > MAX_PROJECTS) throw new Error("limite de 3 projetos");
-      db = parsed; migrate(); save(); goHome(); toast("Dados importados — salvando na sua conta…"); }
-      catch (e) { toast("Arquivo inválido: " + e.message); } };
-    r.readAsText(f);
-  });
-  inp.click();
-}
-function reloadFromServer() {
-  confirmDialog("Descartar edições locais e recarregar do servidor?", () => {
-    api.load().then(data => {
-      db = ensureDb(data); migrate(); localStorage.setItem(LS_KEY, JSON.stringify(db));
-      goHome(); toast("Recarregado do servidor");
-    }).catch(e => toast(e.message));
-  }, { danger: true, okLabel: "Descartar" });
+  title.addEventListener("keydown", e => { if (e.key === "Enter") create(); });
 }
 
 /* ---------- Toast ---------- */
@@ -1159,7 +1151,7 @@ function updateChrome() {
   if (api.isLoggedIn() && sess && isSynced()) {
     slot.innerHTML = `<span class="who">${esc(sess.name || sess.username)}</span><span class="sync" id="sync"></span><button class="btn ghost small" data-act="logout">Sair</button>`;
   } else if (api.isLoggedIn() && sess) {
-    slot.innerHTML = `<span class="who">${esc(sess.name || sess.username)}</span><span class="chip-local">não sincronizado</span><button class="btn ghost small" data-act="logout">Sair</button>`;
+    slot.innerHTML = `<span class="who">${esc(sess.name || sess.username)}</span><span class="sync" id="sync"></span><span class="chip-local">não sincronizado</span><button class="btn ghost small" data-act="logout">Sair</button>`;
   } else {
     slot.innerHTML = `<button class="btn ghost small" data-act="login">Entrar</button>`;
   }
@@ -1171,7 +1163,7 @@ function updateChrome() {
   }));
 }
 
-function enterAppShell() { updateChrome(); route = { view: "home" }; history.replaceState(route, ""); render(); }
+function enterAppShell() { updateChrome(); route = restoredRoute(); history.replaceState(route, ""); rememberRoute(); render(); }
 function enterGuest() {
   db = readLocalDb();
   if (migrate()) localStorage.setItem(LS_KEY, JSON.stringify(db));
@@ -1191,10 +1183,25 @@ async function enterApp() {
   try { adoptCloud(await api.load()); }
   catch (e) { api.clearSession(); clearOwner(); toast(e.message || "Sessão expirada"); boot(); }
 }
-function doLogout() {
+let loggingOut = false;
+async function doLogout() {
+  if (loggingOut) return;
   const wasSynced = isSynced();
+  if (wasSynced) {
+    loggingOut = true;
+    clearTimeout(saveTimer);
+    setSync("saving");
+    try { await api.save(db); }
+    catch (e) {
+      loggingOut = false;
+      setSync("error");
+      toast("Não foi possível salvar antes de sair: " + e.message);
+      return;
+    }
+  }
   api.logout(); clearOwner();
   if (wasSynced) { localStorage.removeItem(LS_KEY); db = { version: 2, projects: [] }; }
+  loggingOut = false;
   boot();
 }
 
@@ -1205,7 +1212,7 @@ function contextBox() {
   if (api.isLoggedIn() && sess) {
     return `<div class="ctx-box">
       <div class="ctx-text"><b>Projeto encontrado neste dispositivo</b><p>Ele ainda não está na sua conta. Salve para acessá-lo de outros dispositivos.</p></div>
-      <div class="ctx-actions"><button class="btn primary" data-ctx="save">Salvar na minha conta</button></div>
+      <div class="ctx-actions"><button class="btn ghost" data-ctx="discard">Descartar</button><button class="btn primary" data-ctx="save">Salvar na minha conta</button></div>
     </div>`;
   }
   if ((db.projects || []).length) {
@@ -1227,7 +1234,17 @@ function wireContextBox() {
     else if (a === "signup") openAuthModal("signup");
     else if (a === "info") openStorageInfo();
     else if (a === "save") saveLocalToAccount();
+    else if (a === "discard") discardLocalProjects();
   }));
+}
+function discardLocalProjects() {
+  confirmDialog("Descartar os projetos deste dispositivo? As alterações locais que ainda não foram salvas na sua conta serão perdidas.", () => {
+    api.load().then(data => {
+      pendingLocal = null; pendingCloud = null;
+      adoptCloud(data);
+      toast("Projetos locais descartados");
+    }).catch(e => toast(e.message));
+  }, { danger: true, okLabel: "Descartar" });
 }
 function saveLocalToAccount() {
   pendingLocal = readLocalDb();
@@ -1291,20 +1308,39 @@ function conflictDialog(title, onNew, onDiscard) {
   b.querySelector("[data-new]").addEventListener("click", () => { close(); onNew(); });
   b.querySelector("[data-discard]").addEventListener("click", () => { close(); onDiscard(); });
 }
+function projectLimitDialog(title, onDiscard, onCancel) {
+  const { b, close } = modal(`
+    <h3>Limite de ${MAX_PROJECTS} projetos</h3>
+    <p class="confirm-msg">Não há espaço na conta para salvar "${esc(title)}". Descarte este projeto local para continuar ou cancele a sincronização.</p>
+    <div class="modal-actions"><button class="btn ghost" data-cancel-sync>Cancelar sincronização</button><button class="btn danger" data-discard>Descartar o local</button></div>`);
+  b.querySelector("[data-discard]").addEventListener("click", () => { close(); onDiscard(); });
+  b.querySelector("[data-cancel-sync]").addEventListener("click", () => { close(); onCancel(); });
+}
 function syncLocalToAccount() {
   const localDb = pendingLocal || readLocalDb();
   const merged = ensureDb(JSON.parse(JSON.stringify(pendingCloud || { version: 2, projects: [] })));
   const locals = (localDb.projects || []).slice();
   const slugs = new Set(merged.projects.map(p => slugify(p.title)));
   const finish = () => {
-    db = merged; setOwner(); localStorage.setItem(LS_KEY, JSON.stringify(db));
+    db = merged; clearOwner(); localStorage.setItem(LS_KEY, JSON.stringify(db));
     enterAppShell(); setSync("saving");
-    api.save(db).then(() => setSync("saved")).catch(e => { setSync("error"); toast("Falha ao salvar: " + e.message); });
-    toast("Projeto salvo na sua conta");
+    api.save(db).then(() => {
+      setOwner(); pendingLocal = null; pendingCloud = null;
+      updateChrome(); render(); setSync("saved");
+      toast("Projeto salvo na sua conta");
+    }).catch(e => {
+      updateChrome(); render(); setSync("error");
+      toast("Falha ao salvar: " + e.message);
+    });
   };
   const step = i => {
     if (i >= locals.length) return finish();
     const lp = locals[i];
+    if (merged.projects.length >= MAX_PROJECTS) {
+      return projectLimitDialog(lp.title,
+        () => step(i + 1),
+        () => toast("Sincronização cancelada"));
+    }
     if (slugs.has(slugify(lp.title))) {
       conflictDialog(lp.title,
         () => { lp.id = uid(lp.title); merged.projects.push(lp); slugs.add(slugify(lp.title)); step(i + 1); },

@@ -1,52 +1,110 @@
-# Controle Fonográfico
+# PhonoProject
 
-Dashboard estático para acompanhar a produção de projetos fonográficos.
+Aplicação web para acompanhar projetos fonográficos, suas faixas, músicos, instrumentos e etapas de produção.
+
 Cada projeto é classificado automaticamente pelo número de faixas:
 
 | Faixas | Tipo |
-|--------|------|
+|---|---|
 | 1–3 | Single |
 | 4–6 | EP |
 | 7+ | Álbum |
 
-Cada **faixa (fonograma)** tem um pipeline de 6 etapas — Composição · Gravação ·
-Edição · Pré-mix · Mix · Master — e cada etapa tem 3 estados: não iniciado ·
-em andamento · concluído. Clicar numa célula alterna o estado.
+O limite atual é de três projetos, tanto no modo local quanto por conta.
 
-## Estrutura
+## Arquitetura
 
-```
+O frontend é uma SPA sem framework ou processo de build:
+
+```text
 index.html          página principal
+assets/app.js       interface, modelo de dados e persistência
+assets/api.js       cliente do Google Apps Script
 assets/styles.css   estilos
-assets/app.js        lógica (SPA sem dependências)
-data/projects.json   dados iniciais (semente) — versionados no repositório
+apps-script/Code.gs backend
 ```
 
-## Como funciona o salvamento
+O frontend pode ser hospedado como site estático no GitHub Pages. O backend é um Web App do Google Apps Script e utiliza:
 
-O GitHub Pages é hospedagem **estática**: a página não grava arquivos no servidor.
-Por isso:
+- Google Sheets para registrar contas;
+- Google Drive para armazenar um JSON por conta;
+- propriedades do Apps Script para configuração e assinatura das sessões.
 
-1. Ao abrir, o app lê `data/projects.json` como estado inicial.
-2. Suas edições (criar/editar/remover projetos e faixas) ficam no **navegador**
-   (localStorage) — persistem entre sessões naquele dispositivo.
-3. Para tornar uma mudança "oficial" e visível em qualquer lugar, clique em
-   **Exportar JSON**, substitua o `data/projects.json` do repositório pelo arquivo
-   baixado e faça commit.
-4. **Recarregar** descarta as edições locais e volta ao que está no repositório.
+## Funcionamento dos dados
 
-## Rodando localmente
+### Sem conta
 
-Como o app usa `fetch` para ler o JSON, abra via servidor (não por `file://`):
+Os projetos ficam no `localStorage` do navegador. Permanecem após recarregar a página, mas não são compartilhados com outros dispositivos.
+
+### Com conta
+
+Os dados continuam em cache local e são enviados automaticamente ao Apps Script, com debounce. O backend salva um JSON independente para cada conta.
+
+Ao entrar com projetos locais existentes, o app permite:
+
+- salvá-los na conta;
+- resolver conflitos de nomes;
+- descartar os dados locais e carregar somente a nuvem.
+
+A mesclagem respeita o limite de três projetos e só é considerada sincronizada depois da confirmação do servidor.
+
+## Modelo de produção
+
+Cada faixa possui:
+
+- compositores;
+- informações gerais, letra/cifra e observações;
+- produtores fonográficos;
+- instrumentos e músicos responsáveis;
+- uma sequência configurável de etapas.
+
+Faixas novas começam com uma etapa-base chamada **Gravação**. Ela funciona por instrumentos, permanece na primeira posição e não pode ser removida, embora possa ser renomeada. As etapas seguintes podem ser holísticas ou por instrumentos e seus rótulos podem ser personalizados.
+
+Os estados possíveis são:
+
+- não iniciado;
+- em andamento;
+- concluído.
+
+## Executar localmente
+
+Sirva a raiz do projeto por HTTP:
 
 ```bash
 python -m http.server 4173
 ```
 
-Depois acesse http://localhost:4173
+Depois acesse [http://localhost:4173](http://localhost:4173).
 
-## Publicando no GitHub Pages
+O frontend local utiliza o endpoint configurado em `assets/api.js`, portanto login e sincronização podem ser testados contra o Apps Script publicado.
 
-1. Crie um repositório e envie estes arquivos.
-2. Em **Settings → Pages**, selecione a branch (`main`) e a pasta raiz (`/root`).
-3. O site fica disponível em `https://<usuario>.github.io/<repo>/`.
+## Configurar o backend
+
+O script espera uma planilha ativa com uma aba `Accounts`. A primeira linha deve ser o cabeçalho e as colunas usadas são:
+
+```text
+id | username | name | passwordHash | salt | createdAt
+```
+
+Configure estas propriedades em **Configurações do projeto → Propriedades do script**:
+
+- `COUPON`: código necessário para criar conta;
+- `SECRET`: segredo usado para assinar tokens;
+- `MAX_ACCOUNTS`: quantidade máxima de contas.
+
+`DATA_FOLDER_ID` e `COVERS_FOLDER_ID` são criadas automaticamente. Execute `setup()` uma vez para autorizar o script e criar as pastas.
+
+Depois publique como Web App e atualize `API_URL` em `assets/api.js` quando a URL da implantação mudar.
+
+Alterar `apps-script/Code.gs` no repositório não atualiza automaticamente a implantação: é necessário criar uma nova versão do Web App no Apps Script.
+
+## Publicar o frontend
+
+No GitHub:
+
+1. Abra **Settings → Pages**.
+2. Selecione a branch de publicação.
+3. Selecione a pasta raiz (`/root`).
+4. Salve e aguarde a publicação.
+
+Para produção, mantenha o Pages apontado para `main` e valide branches de trabalho localmente antes do merge.
