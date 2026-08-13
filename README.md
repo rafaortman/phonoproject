@@ -114,5 +114,5 @@ Para produção, mantenha o Pages apontado para `main` e valide branches de trab
 
 ## Pendências
 
-- Validar o fluxo privado de capas em produção.
 - Permitir exportar e importar um projeto completo em JSON, como cópia independente.
+- Permitir compartilhar um projeto por URL em modo somente leitura, sem autonomia de edição.
