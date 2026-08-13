@@ -1198,8 +1198,8 @@ function openNewProjectModal() {
   if ((db.projects || []).length >= MAX_PROJECTS) return;
   const { b, close } = modal(`
     <h3>Novo projeto fonográfico</h3>
-    <div class="field"><label>Título do projeto</label><input id="np-title" placeholder="Ex.: Blague II" autocomplete="off"></div>
-    <div class="field"><label>Artista</label><input id="np-artist" placeholder="Ex.: Blague" autocomplete="off"></div>
+    <div class="field"><label>Título do projeto</label><input id="np-title" placeholder="Ex.: Meu novo álbum" autocomplete="off"></div>
+    <div class="field"><label>Artista</label><input id="np-artist" placeholder="Ex.: Nome do artista" autocomplete="off"></div>
     <p class="hint">Tipo definido pelo nº de faixas: 1–3 Single · 4–6 EP · 7+ Álbum. Músicos, faixas e etapas você monta depois, na tela do projeto.</p>
     <div class="modal-actions"><button class="btn ghost" data-cancel>Cancelar</button><button class="btn primary" data-ok>Criar projeto</button></div>`);
   const title = b.querySelector("#np-title"); title.focus();
