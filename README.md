@@ -28,6 +28,7 @@ O frontend pode ser hospedado como site estático no GitHub Pages. O backend é 
 
 - Google Sheets para registrar contas;
 - Google Drive para armazenar um JSON por conta;
+- Google Drive para armazenar capas privadas separadas do JSON;
 - propriedades do Apps Script para configuração e assinatura das sessões.
 
 ## Funcionamento dos dados
@@ -47,6 +48,8 @@ Ao entrar com projetos locais existentes, o app permite:
 - descartar os dados locais e carregar somente a nuvem.
 
 A mesclagem respeita o limite de três projetos e só é considerada sincronizada depois da confirmação do servidor.
+
+As capas de projetos locais ficam temporariamente em Base64 no navegador. Ao salvar o projeto em uma conta, cada capa é enviada ao Drive e o JSON passa a guardar somente seu `fileId`. O Apps Script autentica a leitura e a exclusão; os arquivos não são publicados por link.
 
 ## Modelo de produção
 
@@ -108,3 +111,8 @@ No GitHub:
 4. Salve e aguarde a publicação.
 
 Para produção, mantenha o Pages apontado para `main` e valide branches de trabalho localmente antes do merge.
+
+## Pendências
+
+- Validar o fluxo privado de capas em produção.
+- Permitir exportar e importar um projeto completo em JSON, como cópia independente.

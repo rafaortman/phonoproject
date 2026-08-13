@@ -52,8 +52,9 @@ const api = {
   async save(data) { return apiCall("save", { data }); },
 
   async uploadCover(imageBase64, mimeType) { return (await apiCall("uploadCover", { imageBase64, mimeType })).fileId; },
+  async getCover(fileId) {
+    const r = await apiCall("getCover", { fileId });
+    return "data:" + r.mimeType + ";base64," + r.imageBase64;
+  },
   async deleteCover(fileId) { return apiCall("deleteCover", { fileId }); },
-
-  // URL de exibição da capa a partir do fileId (thumbnail do Drive, redimensionável)
-  coverUrl(fileId) { return fileId ? ("https://drive.google.com/thumbnail?id=" + fileId + "&sz=w400") : null; },
 };

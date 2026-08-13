@@ -67,6 +67,8 @@ let peopleSectionOpen = false;
 let trackInfoOpen = true;
 let stagesSectionOpen = true;
 const MAX_PROJECTS = 3;
+const coverCache = new Map(); // fileId -> data URI; nunca é persistido no JSON da conta
+const coverLoadFailed = new Set();
 
 /* ---------- Persistence ---------- */
 // Etapas passaram a ser da faixa: cada faixa herda uma cópia própria das etapas
@@ -113,13 +115,15 @@ function migrate() {
 }
 // Salva no cache local sempre; no servidor (debounce ~1,5s) só se logado E sincronizado.
 let saveTimer = null;
+let hasUnsavedChanges = false;
 function save() {
   localStorage.setItem(LS_KEY, JSON.stringify(db));
-  if (!isSynced()) return;
+  hasUnsavedChanges = true;
+  if (!isSynced() || coverBusy.size) return;
   clearTimeout(saveTimer);
   setSync("saving");
   saveTimer = setTimeout(() => {
-    api.save(db).then(() => setSync("saved")).catch(e => { setSync("error"); toast("Falha ao salvar: " + e.message); });
+    api.save(db).then(() => { hasUnsavedChanges = false; setSync("saved"); }).catch(e => { setSync("error"); toast("Falha ao salvar: " + e.message); });
   }, 1500);
 }
 function ensureDb(data) { return (data && Array.isArray(data.projects)) ? data : { version: 2, projects: [] }; }
@@ -148,6 +152,36 @@ function setSync(state) {
   }
 }
 
+function cloudCoverId(cover) { return cover && typeof cover === "object" ? cover.fileId || "" : ""; }
+function coverSrc(project) {
+  if (!project || !project.cover) return "";
+  if (typeof project.cover === "string") return project.cover;
+  return coverCache.get(cloudCoverId(project.cover)) || "";
+}
+function dataUriParts(dataURI) {
+  const m = /^data:(image\/(?:jpeg|png|webp));base64,([a-z0-9+/=]+)$/i.exec(String(dataURI || ""));
+  if (!m) throw new Error("imagem inválida");
+  return { mimeType: m[1].toLowerCase(), imageBase64: m[2] };
+}
+async function saveCloudNow() {
+  clearTimeout(saveTimer);
+  localStorage.setItem(LS_KEY, JSON.stringify(db));
+  hasUnsavedChanges = true;
+  setSync("saving");
+  await api.save(db);
+  hasUnsavedChanges = false;
+  setSync("saved");
+}
+async function loadCloudCovers(data) {
+  const ids = [...new Set((data.projects || []).map(p => cloudCoverId(p.cover)).filter(id => id && !coverCache.has(id)))];
+  if (!ids.length) return;
+  await Promise.all(ids.map(async id => {
+    try { coverCache.set(id, await api.getCover(id)); coverLoadFailed.delete(id); }
+    catch (e) { coverLoadFailed.add(id); }
+  }));
+  if (db === data) render();
+}
+
 /* ---------- Images (client-side downscale → data URI) ---------- */
 function downscaleImage(file, maxDim, quality) {
   return new Promise((resolve, reject) => {
@@ -164,7 +198,14 @@ function downscaleImage(file, maxDim, quality) {
         const ctx = canvas.getContext("2d");
         ctx.fillStyle = "#000"; ctx.fillRect(0, 0, width, height);
         ctx.drawImage(img, 0, 0, width, height);
-        resolve(canvas.toDataURL("image/jpeg", quality));
+        let q = quality, dataURI = canvas.toDataURL("image/jpeg", q);
+        const bytes = uri => Math.ceil((uri.split(",")[1] || "").length * 3 / 4);
+        while (bytes(dataURI) > 96 * 1024 && q > 0.3) {
+          q = Math.max(0.3, q - 0.08);
+          dataURI = canvas.toDataURL("image/jpeg", q);
+        }
+        if (bytes(dataURI) > 100 * 1024) return reject(new Error("imagem acima de 100 KB"));
+        resolve(dataURI);
       };
       img.onerror = reject; img.src = reader.result;
     };
@@ -176,9 +217,72 @@ function pickImage(maxDim, quality, cb) {
   inp.addEventListener("change", async () => {
     const f = inp.files[0]; if (!f) return;
     try { cb(await downscaleImage(f, maxDim, quality)); }
-    catch (e) { toast("Não consegui carregar a imagem"); }
+    catch (e) { toast(e.message === "imagem acima de 100 KB" ? "A imagem não pôde ser reduzida para 100 KB" : "Não consegui carregar a imagem"); }
   });
   inp.click();
+}
+
+const coverBusy = new Set();
+async function setProjectCover(project, dataURI) {
+  if (coverBusy.has(project.id)) return;
+  if (!isSynced()) {
+    project.cover = dataURI; save(); render(); toast("Capa atualizada"); return;
+  }
+  coverBusy.add(project.id);
+  const previous = project.cover;
+  let newFileId = "";
+  try {
+    const image = dataUriParts(dataURI);
+    setSync("saving");
+    newFileId = await api.uploadCover(image.imageBase64, image.mimeType);
+    project.cover = { fileId: newFileId };
+    coverCache.set(newFileId, dataURI);
+    coverLoadFailed.delete(newFileId);
+    await saveCloudNow();
+    const oldFileId = cloudCoverId(previous);
+    if (oldFileId) { coverCache.delete(oldFileId); api.deleteCover(oldFileId).catch(() => {}); }
+    render(); toast("Capa atualizada");
+  } catch (e) {
+    project.cover = previous;
+    localStorage.setItem(LS_KEY, JSON.stringify(db));
+    if (newFileId) { coverCache.delete(newFileId); api.deleteCover(newFileId).catch(() => {}); }
+    setSync("error"); render(); toast("Falha ao salvar capa: " + e.message);
+  } finally { coverBusy.delete(project.id); }
+}
+async function removeProjectCover(project) {
+  if (coverBusy.has(project.id) || !project.cover) return;
+  if (!isSynced()) {
+    project.cover = null; save(); render(); toast("Capa removida"); return;
+  }
+  coverBusy.add(project.id);
+  const previous = project.cover;
+  const fileId = cloudCoverId(previous);
+  project.cover = null;
+  try {
+    await saveCloudNow();
+    if (fileId) { coverCache.delete(fileId); api.deleteCover(fileId).catch(() => {}); }
+    render(); toast("Capa removida");
+  } catch (e) {
+    project.cover = previous;
+    localStorage.setItem(LS_KEY, JSON.stringify(db));
+    setSync("error"); render(); toast("Falha ao remover capa: " + e.message);
+  } finally { coverBusy.delete(project.id); }
+}
+async function removeProject(project) {
+  const index = db.projects.indexOf(project);
+  if (index < 0) return;
+  const fileId = cloudCoverId(project.cover);
+  db.projects.splice(index, 1);
+  if (!isSynced()) { save(); goHome(); toast("Projeto excluído"); return; }
+  try {
+    await saveCloudNow();
+    if (fileId) { coverCache.delete(fileId); api.deleteCover(fileId).catch(() => {}); }
+    goHome(); toast("Projeto excluído");
+  } catch (e) {
+    db.projects.splice(index, 0, project);
+    localStorage.setItem(LS_KEY, JSON.stringify(db));
+    setSync("error"); render(); toast("Falha ao excluir projeto: " + e.message);
+  }
 }
 
 /* ---------- Helpers ---------- */
@@ -342,8 +446,9 @@ function renderHome() {
     : "";
   const cards = db.projects.map(p => {
     const cls = classify(p.tracks.length);
-    return `<div class="card ${p.cover ? "" : "no-cover"}" data-open="${p.id}">
-        ${p.cover ? `<div class="card-cover"><img src="${p.cover}" alt=""></div>` : ""}
+    const src = coverSrc(p);
+    return `<div class="card ${src ? "" : "no-cover"}" data-open="${p.id}">
+        ${src ? `<div class="card-cover"><img src="${esc(src)}" alt=""></div>` : ""}
         <div class="card-body">
           <div class="card-top">
             <div><h3>${esc(p.title)}</h3><div class="artist">${esc(p.artist) || "&nbsp;"}</div></div>
@@ -372,6 +477,7 @@ function renderHome() {
 function renderProject(p) {
   const cls = classify(p.tracks.length);
   const nominal = projectNominal(p);
+  const cover = coverSrc(p);
   const rows = p.tracks.map((t, i) => {
     const pend = nextAction(p, t);
     const authors = (t.composers || []).map(id => personName(p, id)).filter(Boolean).join(", ");
@@ -395,8 +501,8 @@ function renderProject(p) {
     ${guestBanner()}
     <div class="detail-head">
       <div class="proj-title-wrap">
-        <div class="proj-cover ${p.cover ? "" : "empty"}" data-cover title="${p.cover ? "Trocar capa" : "Adicionar capa"}">
-          ${p.cover ? `<img src="${p.cover}" alt="capa"><button class="cover-x" data-cover-rm title="Remover capa">×</button>` : `<span>+ capa</span>`}
+        <div class="proj-cover ${cover ? "" : "empty"}" data-cover title="${p.cover ? "Trocar capa" : "Adicionar capa"}">
+          ${cover ? `<img src="${esc(cover)}" alt="capa"><button class="cover-x" data-cover-rm title="Remover capa">×</button>` : `<span>${coverLoadFailed.has(cloudCoverId(p.cover)) ? "capa indisponível" : p.cover ? "carregando…" : "+ capa"}</span>`}
         </div>
         <div>
           <h2>${esc(p.title)}</h2>
@@ -554,15 +660,15 @@ function renderProject(p) {
   const coverEl = app.querySelector("[data-cover]");
   if (coverEl) coverEl.addEventListener("click", e => {
     if (e.target.closest("[data-cover-rm]")) return;
-    pickImage(512, 0.72, dataURI => { p.cover = dataURI; save(); render(); toast("Capa atualizada"); });
+    pickImage(512, 0.72, dataURI => setProjectCover(p, dataURI));
   });
   const coverRm = app.querySelector("[data-cover-rm]");
   if (coverRm) coverRm.addEventListener("click", e => {
-    e.stopPropagation(); p.cover = null; save(); render(); toast("Capa removida");
+    e.stopPropagation(); removeProjectCover(p);
   });
   app.querySelector("[data-del-project]").addEventListener("click", () => {
     confirmDialog(`Excluir o projeto "${p.title}" e todas as suas faixas? Não pode ser desfeito.`,
-      () => { db.projects = db.projects.filter(x => x.id !== p.id); save(); goHome(); toast("Projeto excluído"); },
+      () => removeProject(p),
       { danger: true, okLabel: "Excluir" });
   });
 }
@@ -1171,8 +1277,10 @@ function enterGuest() {
 }
 function adoptCloud(data) {
   db = ensureDb(data); const migrated = migrate(); setOwner(); localStorage.setItem(LS_KEY, JSON.stringify(db));
+  hasUnsavedChanges = migrated;
   enterAppShell(); setSync("saved");
-  if (migrated) api.save(db).catch(e => { setSync("error"); toast("Falha ao migrar dados: " + e.message); });
+  loadCloudCovers(db);
+  if (migrated) api.save(db).then(() => { hasUnsavedChanges = false; }).catch(e => { setSync("error"); toast("Falha ao migrar dados: " + e.message); });
 }
 function adoptGuestLoggedIn(local) {
   db = ensureDb(local); migrate(); clearOwner(); localStorage.setItem(LS_KEY, JSON.stringify(db));
@@ -1181,17 +1289,22 @@ function adoptGuestLoggedIn(local) {
 async function enterApp() {
   app.innerHTML = `<div class="ctx-box"><p class="auth-loading">Carregando…</p></div>`;
   try { adoptCloud(await api.load()); }
-  catch (e) { api.clearSession(); clearOwner(); toast(e.message || "Sessão expirada"); boot(); }
+  catch (e) {
+    if (!api.isLoggedIn()) { clearOwner(); toast(e.message || "Sessão expirada"); return boot(); }
+    app.innerHTML = `<div class="ctx-box"><div class="ctx-text"><b>Não foi possível carregar seus projetos</b><p>${esc(e.message || "Erro no servidor.")}</p></div><div class="ctx-actions"><button class="btn primary" data-retry-load>Tentar novamente</button><button class="btn ghost" data-load-logout>Sair</button></div></div>`;
+    app.querySelector("[data-retry-load]").addEventListener("click", enterApp);
+    app.querySelector("[data-load-logout]").addEventListener("click", doLogout);
+  }
 }
 let loggingOut = false;
 async function doLogout() {
   if (loggingOut) return;
   const wasSynced = isSynced();
-  if (wasSynced) {
+  if (wasSynced && hasUnsavedChanges) {
     loggingOut = true;
     clearTimeout(saveTimer);
     setSync("saving");
-    try { await api.save(db); }
+    try { await api.save(db); hasUnsavedChanges = false; }
     catch (e) {
       loggingOut = false;
       setSync("error");
@@ -1200,6 +1313,8 @@ async function doLogout() {
     }
   }
   api.logout(); clearOwner();
+  coverCache.clear();
+  coverLoadFailed.clear();
   if (wasSynced) { localStorage.removeItem(LS_KEY); db = { version: 2, projects: [] }; }
   loggingOut = false;
   boot();
@@ -1316,22 +1431,42 @@ function projectLimitDialog(title, onDiscard, onCancel) {
   b.querySelector("[data-discard]").addEventListener("click", () => { close(); onDiscard(); });
   b.querySelector("[data-cancel-sync]").addEventListener("click", () => { close(); onCancel(); });
 }
+async function uploadEmbeddedCovers(targetDb, uploadedIds) {
+  for (const project of (targetDb.projects || [])) {
+    if (typeof project.cover !== "string" || !project.cover.startsWith("data:image/")) continue;
+    const dataURI = project.cover;
+    const image = dataUriParts(dataURI);
+    const fileId = await api.uploadCover(image.imageBase64, image.mimeType);
+    uploadedIds.push(fileId);
+    coverCache.set(fileId, dataURI);
+    project.cover = { fileId };
+  }
+}
 function syncLocalToAccount() {
   const localDb = pendingLocal || readLocalDb();
   const merged = ensureDb(JSON.parse(JSON.stringify(pendingCloud || { version: 2, projects: [] })));
-  const locals = (localDb.projects || []).slice();
+  const locals = JSON.parse(JSON.stringify(localDb.projects || []));
   const slugs = new Set(merged.projects.map(p => slugify(p.title)));
-  const finish = () => {
-    db = merged; clearOwner(); localStorage.setItem(LS_KEY, JSON.stringify(db));
-    enterAppShell(); setSync("saving");
-    api.save(db).then(() => {
+  const finish = async () => {
+    const uploadedIds = [];
+    try {
+      setSync("saving");
+      await uploadEmbeddedCovers(merged, uploadedIds);
+      db = merged; clearOwner(); localStorage.setItem(LS_KEY, JSON.stringify(db));
+      hasUnsavedChanges = true;
+      enterAppShell(); setSync("saving");
+      await api.save(db);
+      hasUnsavedChanges = false;
       setOwner(); pendingLocal = null; pendingCloud = null;
       updateChrome(); render(); setSync("saved");
       toast("Projeto salvo na sua conta");
-    }).catch(e => {
+    } catch (e) {
+      uploadedIds.forEach(id => { coverCache.delete(id); api.deleteCover(id).catch(() => {}); });
+      db = ensureDb(JSON.parse(JSON.stringify(localDb)));
+      clearOwner(); localStorage.setItem(LS_KEY, JSON.stringify(db));
       updateChrome(); render(); setSync("error");
       toast("Falha ao salvar: " + e.message);
-    });
+    }
   };
   const step = i => {
     if (i >= locals.length) return finish();

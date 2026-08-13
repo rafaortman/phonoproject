@@ -31,6 +31,7 @@ function doPost(e) {
       case 'load':          return withAuth_(body, load_);
       case 'save':          return withAuth_(body, save_);
       case 'uploadCover':   return withAuth_(body, uploadCover_);
+      case 'getCover':      return withAuth_(body, getCover_);
       case 'deleteCover':   return withAuth_(body, deleteCover_);
       default:              return json_({ ok: false, error: 'ação desconhecida' });
     }
@@ -111,8 +112,11 @@ function dataFileName_(accountId) { return accountId + '.json'; }
 function readData_(accountId) {
   const it = dataFolder_().getFilesByName(dataFileName_(accountId));
   if (!it.hasNext()) return { version: 4, projects: [] };
-  try { return JSON.parse(it.next().getBlob().getDataAsString()); }
-  catch (e) { return { version: 4, projects: [] }; }
+  let data;
+  try { data = JSON.parse(it.next().getBlob().getDataAsString()); }
+  catch (e) { throw new Error('não foi possível ler os dados da conta'); }
+  if (!data || !Array.isArray(data.projects)) throw new Error('dados da conta inválidos');
+  return data;
 }
 function writeData_(accountId, obj) {
   const folder = dataFolder_();
@@ -164,14 +168,29 @@ function save_(body, aid) {
 function uploadCover_(body, aid) {
   const b64 = String(body.imageBase64 || '');
   if (!b64) return json_({ ok: false, error: 'imagem vazia' });
-  const bytes = Utilities.base64Decode(b64);
+  let bytes;
+  try { bytes = Utilities.base64Decode(b64); }
+  catch (e) { return json_({ ok: false, error: 'imagem inválida' }); }
   if (bytes.length > 100 * 1024) return json_({ ok: false, error: 'imagem acima de 100 KB' });
-  const blob = Utilities.newBlob(bytes, String(body.mimeType || 'image/jpeg'), aid + '-' + Date.now());
+  const mime = String(body.mimeType || '').toLowerCase();
+  if (mime !== 'image/jpeg' && mime !== 'image/png' && mime !== 'image/webp') return json_({ ok: false, error: 'formato de imagem inválido' });
+  const blob = Utilities.newBlob(bytes, mime, aid + '--' + Utilities.getUuid());
   const file = coversFolder_().createFile(blob);
-  file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
   return json_({ ok: true, fileId: file.getId() });
 }
+function ownedCover_(fileId, aid) {
+  const file = DriveApp.getFileById(String(fileId || ''));
+  if (file.getName().indexOf(aid + '--') !== 0) throw new Error('capa não encontrada');
+  return file;
+}
+function getCover_(body, aid) {
+  try {
+    const blob = ownedCover_(body.fileId, aid).getBlob();
+    return json_({ ok: true, imageBase64: Utilities.base64Encode(blob.getBytes()), mimeType: blob.getContentType() || 'image/jpeg' });
+  } catch (e) { return json_({ ok: false, error: 'capa não encontrada' }); }
+}
 function deleteCover_(body, aid) {
-  try { DriveApp.getFileById(String(body.fileId)).setTrashed(true); } catch (e) {}
+  try { ownedCover_(body.fileId, aid).setTrashed(true); }
+  catch (e) { return json_({ ok: false, error: 'capa não encontrada' }); }
   return json_({ ok: true });
 }
