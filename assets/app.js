@@ -1379,13 +1379,19 @@ function openStorageInfo() {
 /* ----- Login / criar conta (modal) ----- */
 function openAuthModal(mode) {
   const isLogin = mode !== "signup";
+  const ph = isLogin ? { user: "", pass: "" } : {
+    name: "Seu nome",
+    user: "Não precisa ser email",
+    pass: "Lembre-se da sua senha, não poderemos reenviá-la",
+    coupon: "Se não tem cupom, solicite ao desenvolvedor.",
+  };
   const { b, close } = modal(`
     <div class="auth-logo">${DISC_SVG}</div>
     <h3 class="auth-title">${isLogin ? "Entrar" : "Criar conta"}</h3>
-    ${isLogin ? "" : `<div class="field"><label>Nome</label><input id="au-name" autocomplete="name"></div>`}
-    <div class="field"><label>Usuário</label><input id="au-user" autocomplete="username"></div>
-    <div class="field"><label>Senha</label><input id="au-pass" type="password" autocomplete="${isLogin ? "current-password" : "new-password"}"></div>
-    ${isLogin ? "" : `<div class="field"><label>Cupom</label><input id="au-coupon" autocomplete="off"></div>`}
+    ${isLogin ? "" : `<div class="field"><label>Nome</label><input id="au-name" autocomplete="name" placeholder="${ph.name}"></div>`}
+    <div class="field"><label>Usuário</label><input id="au-user" autocomplete="username" placeholder="${ph.user}"></div>
+    <div class="field"><label>Senha</label><input id="au-pass" type="password" autocomplete="${isLogin ? "current-password" : "new-password"}" placeholder="${ph.pass}"></div>
+    ${isLogin ? "" : `<div class="field"><label>Cupom</label><input id="au-coupon" autocomplete="off" placeholder="${ph.coupon}"></div>`}
     <div class="auth-msg" id="au-msg"></div>
     <div class="modal-actions"><button class="btn ghost" data-cancel>Cancelar</button><button class="btn primary" id="au-go">${isLogin ? "Entrar" : "Criar conta"}</button></div>
     <div class="auth-alt">${isLogin ? `Não tem conta? <button class="linkbtn" data-swap="signup">Criar conta</button>` : `Já tem conta? <button class="linkbtn" data-swap="login">Entrar</button>`}</div>`);
