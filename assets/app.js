@@ -507,9 +507,11 @@ function renderProject(p) {
   });
 }
 
-// Short "what's next" hint for a track
+// Short "what's next" hint for a track — sempre a etapa em vigência (nunca "tudo concluído")
 function nextAction(p, t) {
-  for (const s of (t.stages || [])) {
+  const stages = t.stages || [];
+  if (!stages.length) return "sem etapas";
+  for (const s of stages) {
     const status = stageStatus(p, t, s);
     if (status !== "done") {
       if (s.mode === "instruments") {
@@ -522,7 +524,8 @@ function nextAction(p, t) {
       return `${s.label}: ${STATE_LABEL[status]}`;
     }
   }
-  return "Tudo concluído 🎉";
+  // tudo pronto → mostra a última etapa (a vigente), sem fogos
+  return `${stages[stages.length - 1].label}: concluída`;
 }
 
 // Situação nominal da faixa: a etapa em que ela está + qualificador (sem número)
@@ -533,7 +536,7 @@ function trackSituacao(p, t) {
   for (let i = 0; i < stages.length; i++) {
     if (stageStatus(p, t, stages[i]) !== "done") { curIdx = i; break; }
   }
-  if (curIdx === -1) return "concluída";
+  if (curIdx === -1) return `${stages[stages.length - 1].label} concluída`;
   const cur = stages[curIdx];
   if (stageStatus(p, t, cur) === "wip") return `${cur.label} em andamento`;
   if (curIdx > 0) return `${stages[curIdx - 1].label} concluída`;
