@@ -1337,7 +1337,7 @@ function contextBox() {
     </div>`;
   }
   return `<div class="ctx-box welcome-box">
-    <div class="ctx-text"><b>Bem-vindo</b><p>Organize a produção dos seus projetos musicais — faixas, pessoas, instrumentos e etapas de produção. Seus projetos ficam salvos só neste dispositivo. <button class="linkbtn" data-ctx="info">Entenda como funciona</button>.</p></div>
+    <div class="ctx-text"><b>Bem-vindo</b><p>Organize a produção dos seus projetos musicais — faixas, pessoas, instrumentos e etapas de produção. Comece agora sem cadastro (salvo só neste dispositivo) ou crie uma conta para guardá-los na nuvem e acessar de qualquer lugar. <button class="linkbtn" data-ctx="info">Entenda como funciona</button>.</p></div>
     <div class="ctx-actions"><button class="btn primary" data-ctx="new">Criar projeto</button><button class="btn ghost" data-ctx="login">Entrar</button></div>
   </div>`;
 }
