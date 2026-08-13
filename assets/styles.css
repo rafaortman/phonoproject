@@ -1674,24 +1674,40 @@ table.pipeline .track-title input:focus {
   max-width: 520px;
 }
 
-/* ---------- Autenticação (login / criar conta) ---------- */
-.who { color: var(--text-dim); font-size: 13px; margin-right: 6px; }
-.auth { min-height: 70vh; display: grid; place-items: center; padding: 24px 0; }
-.auth-card {
-  width: 100%; max-width: 360px; background: var(--bg-elev); border: 1px solid var(--border);
-  border-radius: var(--radius); padding: 28px 26px; box-shadow: var(--shadow);
-}
-.auth-logo { color: var(--accent); display: flex; justify-content: center; margin-bottom: 6px; }
-.auth-card h2 { text-align: center; margin: 0 0 18px; font-size: 22px; letter-spacing: -0.01em; }
-.auth-card .field { margin-bottom: 12px; }
-.auth-card label { display: block; font-size: 12px; color: var(--text-faint); margin-bottom: 5px; }
-.auth-card input {
-  width: 100%; background: var(--bg); border: 1px solid var(--border); color: var(--text);
-  font: inherit; font-size: 14px; padding: 9px 11px; border-radius: 8px;
-}
-.auth-card input:focus { border-color: var(--accent); outline: none; }
-.auth-msg { min-height: 18px; color: var(--danger); font-size: 12.5px; margin: 4px 0 10px; }
-.auth-go { width: 100%; justify-content: center; padding: 10px; font-size: 14px; }
-.auth-alt { text-align: center; color: var(--text-faint); font-size: 13px; margin-top: 16px; }
-.auth-loading { text-align: center; color: var(--text-dim); }
+/* ---------- Autenticação / estados ---------- */
 .linkbtn { background: none; border: none; color: var(--accent); cursor: pointer; font: inherit; font-size: 13px; padding: 0; text-decoration: underline; }
+.authslot { display: inline-flex; align-items: center; gap: 8px; }
+.who { color: var(--text-dim); font-size: 13px; }
+.sync { font-size: 12px; color: var(--text-faint); min-width: 60px; }
+.sync.saving { color: var(--wip); } .sync.saved { color: var(--done); } .sync.error { color: var(--danger); }
+.chip-local {
+  display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: #f2d59b;
+  background: #f5b54418; border: 1px solid #f5b54444; border-radius: 999px; padding: 3px 10px;
+}
+.chip-local .linkbtn { color: #f2d59b; }
+
+/* box de contexto/estado (no topo da home, antes do .section-head) */
+.ctx-box {
+  display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+  background: var(--bg-elev); border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 16px 20px; margin-bottom: 22px;
+}
+.ctx-text { flex: 1; min-width: 220px; }
+.ctx-text b { font-size: 15px; }
+.ctx-text p { color: var(--text-dim); font-size: 13.5px; line-height: 1.55; margin: 4px 0 0; }
+.ctx-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
+.ctx-box.welcome-box { flex-direction: column; text-align: center; padding: 28px 24px; }
+.ctx-box.welcome-box .ctx-text p { text-align: center; font-size: 14.5px; }
+.auth-logo { color: var(--accent); display: flex; justify-content: center; }
+.auth-loading { color: var(--text-dim); text-align: center; }
+
+/* login/criar conta no modal */
+.auth-title { text-align: center; margin: 6px 0 16px; }
+.auth-msg { min-height: 18px; color: var(--danger); font-size: 12.5px; margin: 4px 0 6px; }
+.auth-alt { text-align: center; color: var(--text-faint); font-size: 13px; margin-top: 14px; }
+
+/* banner de convidado dentro de um projeto */
+.guest-banner {
+  background: #f5b54414; border: 1px solid #f5b54433; color: var(--text-dim);
+  border-radius: 8px; padding: 9px 14px; font-size: 13px; margin-bottom: 16px;
+}

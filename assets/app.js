@@ -17,6 +17,7 @@
    ========================================================================== */
 
 const LS_KEY = "fono-dashboard-v2";
+const LS_OWNER = "fono-owner"; // username dono do db local (sincronizado); ausente = local/convidado
 
 const DEFAULT_STAGES = [
   { id: "composicao", label: "Composição", mode: "holistic" },
@@ -76,17 +77,34 @@ function migrate() {
     delete p.stages; // projeto não é mais dono das etapas
   });
 }
-// Salva no cache local sempre; e no servidor com debounce (~1,5s) se logado.
+// Salva no cache local sempre; no servidor (debounce ~1,5s) só se logado E sincronizado.
 let saveTimer = null;
 function save() {
   localStorage.setItem(LS_KEY, JSON.stringify(db));
-  if (!api.isLoggedIn()) return;
+  if (!isSynced()) return;
   clearTimeout(saveTimer);
+  setSync("saving");
   saveTimer = setTimeout(() => {
-    api.save(db).catch(e => toast("Falha ao salvar no servidor: " + e.message));
+    api.save(db).then(() => setSync("saved")).catch(e => { setSync("error"); toast("Falha ao salvar: " + e.message); });
   }, 1500);
 }
 function ensureDb(data) { return (data && Array.isArray(data.projects)) ? data : { version: 2, projects: [] }; }
+function readLocalDb() { try { return ensureDb(JSON.parse(localStorage.getItem(LS_KEY) || "null")); } catch (e) { return { version: 2, projects: [] }; } }
+function hasLocalData() { return (readLocalDb().projects || []).length > 0; }
+// db local pertence à conta logada?
+function isSynced() { const s = api.session(); return !!(api.isLoggedIn() && s && localStorage.getItem(LS_OWNER) === s.username); }
+function setOwner() { const s = api.session(); if (s) localStorage.setItem(LS_OWNER, s.username); }
+function clearOwner() { localStorage.removeItem(LS_OWNER); }
+function slugify(s) {
+  return (s || "").toString().toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "")
+    .replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+}
+function setSync(state) {
+  const el = document.getElementById("sync");
+  if (!el) return;
+  el.className = "sync " + state;
+  el.textContent = state === "saving" ? "salvando…" : state === "saved" ? "salvo ✓" : state === "error" ? "erro ao salvar" : "";
+}
 
 /* ---------- Images (client-side downscale → data URI) ---------- */
 function downscaleImage(file, maxDim, quality) {
@@ -312,6 +330,7 @@ function renderHome() {
   }).join("");
 
   app.innerHTML = `
+    ${contextBox()}
     <div class="section-head"><h2>Meus projetos</h2>
       <span class="count">${db.projects.length} projeto${db.projects.length === 1 ? "" : "s"}</span></div>
     ${db.projects.length ? `<div class="grid">${cards}</div>` : `
@@ -319,6 +338,7 @@ function renderHome() {
         <p>Crie seu primeiro projeto fonográfico para começar.</p>
         <button class="btn primary" data-action="new">+ Novo projeto</button></div>`}`;
 
+  wireContextBox();
   app.querySelectorAll("[data-open]").forEach(el => el.addEventListener("click", () => goProject(el.dataset.open)));
   const nb = app.querySelector('[data-action="new"]'); if (nb) nb.addEventListener("click", openNewProjectModal);
 }
@@ -345,6 +365,7 @@ function renderProject(p) {
 
   app.innerHTML = `
     <div class="crumb back icon-btn" data-home>${icon("left")} Projetos</div>
+    ${guestBanner()}
     <div class="detail-head">
       <div class="proj-title-wrap">
         <div class="proj-cover ${p.cover ? "" : "empty"}" data-cover title="${p.cover ? "Trocar capa" : "Adicionar capa"}">
@@ -408,6 +429,7 @@ function renderProject(p) {
     <div class="add-track-bar"><button class="btn primary" data-add-track>+ Adicionar faixa</button></div>`;
 
   app.querySelector("[data-home]").addEventListener("click", goHome);
+  const gl = app.querySelector("[data-guest-login]"); if (gl) gl.addEventListener("click", () => openAuthModal("login"));
   app.querySelectorAll("[data-track]").forEach(el => el.addEventListener("click", () => goTrack(p.id, el.dataset.track)));
   app.querySelector("[data-add-track]").addEventListener("click", () => openTrackModal(p));
 
@@ -1087,67 +1109,186 @@ function toast(msg) {
   clearTimeout(toastTimer); toastTimer = setTimeout(() => el.classList.remove("show"), 2600);
 }
 
-/* ---------- Autenticação ---------- */
-function setChrome(on) {
-  document.getElementById("topbar").hidden = !on;
-  if (on) { const s = api.session(); document.getElementById("who").textContent = s ? (s.name || s.username || "") : ""; }
+/* ---------- Autenticação (4 estados) ---------- */
+const DISC_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960" fill="currentColor" width="42" height="42"><path d="M480-316q70 0 120-47.5T650-480q0-71-49.5-120.5T480-650q-69 0-116.5 50T316-480q0 69 47.5 116.5T480-316Zm0-104q-25 0-42.5-17.5T420-480q0-25 17.5-42.5T480-540q25 0 42.5 17.5T540-480q0 25-17.5 42.5T480-420Zm0 340q-83 0-156-31.5T197-197q-54-54-85.5-127T80-480q0-83 31.5-156T197-763q54-54 127-85.5T480-880q83 0 156 31.5T763-763q54 54 85.5 127T880-480q0 83-31.5 156T763-197q-54 54-127 85.5T480-80Z"/></svg>`;
+let pendingLocal = null, pendingCloud = null;
+
+// Preenche a topbar: convidado (Entrar/Criar conta) · logado (nome + sync + Sair) · não-sinc (nome + chip + Sair)
+function updateChrome() {
+  const slot = document.getElementById("authslot");
+  const sess = api.session();
+  if (api.isLoggedIn() && sess && isSynced()) {
+    slot.innerHTML = `<span class="who">${esc(sess.name || sess.username)}</span><span class="sync" id="sync"></span><button class="btn ghost small" data-act="logout">Sair</button>`;
+  } else if (api.isLoggedIn() && sess) {
+    slot.innerHTML = `<span class="who">${esc(sess.name || sess.username)}</span><span class="chip-local">não sincronizado</span><button class="btn ghost small" data-act="logout">Sair</button>`;
+  } else {
+    slot.innerHTML = `<button class="btn ghost small" data-act="login">Entrar</button><button class="btn ghost small" data-act="signup">Criar conta</button>`;
+  }
+  slot.querySelectorAll("[data-act]").forEach(b => b.addEventListener("click", () => {
+    const a = b.dataset.act;
+    if (a === "logout") doLogout();
+    else if (a === "login") openAuthModal("login");
+    else if (a === "signup") openAuthModal("signup");
+  }));
 }
-function afterAuth(data) {
-  db = ensureDb(data); migrate();
-  localStorage.setItem(LS_KEY, JSON.stringify(db));
-  setChrome(true);
-  route = { view: "home" }; history.replaceState(route, ""); render();
+
+function enterAppShell() { updateChrome(); route = { view: "home" }; history.replaceState(route, ""); render(); }
+function enterGuest() { db = readLocalDb(); migrate(); enterAppShell(); }
+function adoptCloud(data) {
+  db = ensureDb(data); migrate(); setOwner(); localStorage.setItem(LS_KEY, JSON.stringify(db));
+  enterAppShell(); setSync("saved");
+}
+function adoptGuestLoggedIn(local) {
+  db = ensureDb(local); migrate(); clearOwner(); localStorage.setItem(LS_KEY, JSON.stringify(db));
+  enterAppShell();
 }
 async function enterApp() {
-  app.innerHTML = `<div class="auth"><div class="auth-card"><p class="auth-loading">Carregando…</p></div></div>`;
-  try { afterAuth(await api.load()); }
-  catch (e) { api.clearSession(); toast(e.message || "Sessão expirada"); renderAuth("login"); }
+  app.innerHTML = `<div class="ctx-box"><p class="auth-loading">Carregando…</p></div>`;
+  try { adoptCloud(await api.load()); }
+  catch (e) { api.clearSession(); clearOwner(); toast(e.message || "Sessão expirada"); boot(); }
 }
-function renderAuth(mode) {
-  setChrome(false);
-  const isLogin = mode !== "signup";
-  app.innerHTML = `
-    <div class="auth">
-      <div class="auth-card">
-        <div class="auth-logo"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960" fill="currentColor" width="40" height="40"><path d="M480-316q70 0 120-47.5T650-480q0-71-49.5-120.5T480-650q-69 0-116.5 50T316-480q0 69 47.5 116.5T480-316Zm0-104q-25 0-42.5-17.5T420-480q0-25 17.5-42.5T480-540q25 0 42.5 17.5T540-480q0 25-17.5 42.5T480-420Zm0 340q-83 0-156-31.5T197-197q-54-54-85.5-127T80-480q0-83 31.5-156T197-763q54-54 127-85.5T480-880q83 0 156 31.5T763-763q54 54 85.5 127T880-480q0 83-31.5 156T763-197q-54 54-127 85.5T480-80Z"/></svg></div>
-        <h2>${isLogin ? "Entrar" : "Criar conta"}</h2>
-        ${isLogin ? "" : `<div class="field"><label>Nome</label><input id="au-name" autocomplete="name"></div>`}
-        <div class="field"><label>Usuário</label><input id="au-user" autocomplete="username"></div>
-        <div class="field"><label>Senha</label><input id="au-pass" type="password" autocomplete="${isLogin ? "current-password" : "new-password"}"></div>
-        ${isLogin ? "" : `<div class="field"><label>Cupom</label><input id="au-coupon" autocomplete="off"></div>`}
-        <div class="auth-msg" id="au-msg"></div>
-        <button class="btn primary auth-go" id="au-go">${isLogin ? "Entrar" : "Criar conta"}</button>
-        <div class="auth-alt">${isLogin
-          ? `Não tem conta? <button class="linkbtn" data-auth="signup">Criar conta</button>`
-          : `Já tem conta? <button class="linkbtn" data-auth="login">Entrar</button>`}</div>
-      </div>
-    </div>`;
+function doLogout() {
+  const wasSynced = isSynced();
+  api.logout(); clearOwner();
+  if (wasSynced) { localStorage.removeItem(LS_KEY); db = { version: 2, projects: [] }; }
+  boot();
+}
 
-  const msg = t => { document.getElementById("au-msg").textContent = t || ""; };
-  const go = document.getElementById("au-go");
+// Box de contexto no topo da home (antes do .section-head), conforme o estado
+function contextBox() {
+  const sess = api.session();
+  if (api.isLoggedIn() && sess && isSynced()) return "";
+  if (api.isLoggedIn() && sess) {
+    return `<div class="ctx-box">
+      <div class="ctx-text"><b>Projeto encontrado neste dispositivo</b><p>Ele ainda não está na sua conta. Salve para acessá-lo de outros dispositivos.</p></div>
+      <div class="ctx-actions"><button class="btn primary" data-ctx="save">Salvar na minha conta</button></div>
+    </div>`;
+  }
+  if ((db.projects || []).length) {
+    return `<div class="ctx-box">
+      <div class="ctx-text"><b>Modo local</b><p>Seus projetos ficam salvos só neste dispositivo. Crie uma conta para guardá-los na nuvem e acessar de qualquer lugar.</p></div>
+      <div class="ctx-actions"><button class="btn primary" data-ctx="signup">Criar conta</button><button class="btn ghost" data-ctx="login">Entrar</button><button class="linkbtn" data-ctx="info">Como funciona?</button></div>
+    </div>`;
+  }
+  return `<div class="ctx-box welcome-box">
+    <div class="auth-logo">${DISC_SVG}</div>
+    <div class="ctx-text"><b>Bem-vindo</b><p>Organize a produção dos seus projetos musicais — faixas, pessoas, instrumentos e etapas de produção. Comece agora, sem conta (salvo neste dispositivo). Para acessar de outros dispositivos ou manter na nuvem, crie uma conta.</p></div>
+    <div class="ctx-actions"><button class="btn primary" data-ctx="new">Criar projeto</button><button class="btn ghost" data-ctx="login">Entrar</button><button class="btn ghost" data-ctx="signup">Criar conta</button></div>
+  </div>`;
+}
+function wireContextBox() {
+  app.querySelectorAll("[data-ctx]").forEach(b => b.addEventListener("click", () => {
+    const a = b.dataset.ctx;
+    if (a === "new") openNewProjectModal();
+    else if (a === "login") openAuthModal("login");
+    else if (a === "signup") openAuthModal("signup");
+    else if (a === "info") openStorageInfo();
+    else if (a === "save") saveLocalToAccount();
+  }));
+}
+function saveLocalToAccount() {
+  pendingLocal = readLocalDb();
+  const run = () => syncLocalToAccount();
+  if (pendingCloud) run();
+  else api.load().then(c => { pendingCloud = ensureDb(c); run(); }).catch(e => toast(e.message));
+}
+function openStorageInfo() {
+  const { b, close } = modal(`
+    <h3>Como funciona o armazenamento?</h3>
+    <p class="confirm-msg">Sem conta, seus projetos ficam salvos <b>só neste navegador</b> (armazenamento local). Não se perdem ao recarregar, mas ficam presos a este dispositivo.</p>
+    <p class="confirm-msg">Com uma conta, eles são <b>salvos na nuvem</b> automaticamente — você acessa de qualquer lugar e não corre risco de perder se limpar o navegador.</p>
+    <div class="modal-actions"><button class="btn primary" data-ok>Entendi</button></div>`);
+  b.querySelector("[data-ok]").addEventListener("click", close);
+}
+
+/* ----- Login / criar conta (modal) ----- */
+function openAuthModal(mode) {
+  const isLogin = mode !== "signup";
+  const { b, close } = modal(`
+    <div class="auth-logo">${DISC_SVG}</div>
+    <h3 class="auth-title">${isLogin ? "Entrar" : "Criar conta"}</h3>
+    ${isLogin ? "" : `<div class="field"><label>Nome</label><input id="au-name" autocomplete="name"></div>`}
+    <div class="field"><label>Usuário</label><input id="au-user" autocomplete="username"></div>
+    <div class="field"><label>Senha</label><input id="au-pass" type="password" autocomplete="${isLogin ? "current-password" : "new-password"}"></div>
+    ${isLogin ? "" : `<div class="field"><label>Cupom</label><input id="au-coupon" autocomplete="off"></div>`}
+    <div class="auth-msg" id="au-msg"></div>
+    <div class="modal-actions"><button class="btn ghost" data-cancel>Cancelar</button><button class="btn primary" id="au-go">${isLogin ? "Entrar" : "Criar conta"}</button></div>
+    <div class="auth-alt">${isLogin ? `Não tem conta? <button class="linkbtn" data-swap="signup">Criar conta</button>` : `Já tem conta? <button class="linkbtn" data-swap="login">Entrar</button>`}</div>`);
+  const msg = t => { b.querySelector("#au-msg").textContent = t || ""; };
+  const go = b.querySelector("#au-go");
   const submit = () => {
-    const user = document.getElementById("au-user").value.trim();
-    const pass = document.getElementById("au-pass").value;
+    const user = b.querySelector("#au-user").value.trim();
+    const pass = b.querySelector("#au-pass").value;
     if (!user || !pass) return msg("Preencha usuário e senha.");
     go.disabled = true; msg(isLogin ? "Entrando…" : "Criando conta…");
-    const p = isLogin
-      ? api.login(user, pass)
-      : api.createAccount(document.getElementById("au-name").value.trim(), user, pass, document.getElementById("au-coupon").value.trim());
-    p.then(r => afterAuth(r.data)).catch(e => { go.disabled = false; msg(e.message); });
+    const p = isLogin ? api.login(user, pass)
+      : api.createAccount(b.querySelector("#au-name").value.trim(), user, pass, b.querySelector("#au-coupon").value.trim());
+    p.then(r => { close(); onAuthed(r.data); }).catch(e => { go.disabled = false; msg(e.message); });
   };
   go.addEventListener("click", submit);
-  app.querySelectorAll("[data-auth]").forEach(b => b.addEventListener("click", () => renderAuth(b.dataset.auth)));
-  app.querySelectorAll(".auth-card input").forEach(inp => inp.addEventListener("keydown", e => { if (e.key === "Enter") submit(); }));
-  const first = app.querySelector(".auth-card input"); if (first) first.focus();
+  b.querySelector("[data-cancel]").addEventListener("click", close);
+  b.querySelector("[data-swap]").addEventListener("click", () => { close(); openAuthModal(b.querySelector("[data-swap]").dataset.swap); });
+  b.querySelectorAll("input").forEach(inp => inp.addEventListener("keydown", e => { if (e.key === "Enter") submit(); }));
+  const first = b.querySelector("input"); if (first) first.focus();
+}
+function onAuthed(cloudData) {
+  const sess = api.session();
+  const local = readLocalDb();
+  const hasGuest = (local.projects || []).length > 0 && localStorage.getItem(LS_OWNER) !== (sess || {}).username;
+  if (hasGuest) { pendingCloud = ensureDb(cloudData); adoptGuestLoggedIn(local); } // box oferece "Salvar na minha conta"
+  else adoptCloud(cloudData);
+}
+
+/* ----- Reconciliação por slug ----- */
+function conflictDialog(title, onNew, onDiscard) {
+  const { b, close } = modal(`
+    <h3>Já existe "${esc(title)}" na sua conta</h3>
+    <p class="confirm-msg">Um projeto com esse nome já está na sua conta. O que fazer com o deste dispositivo?</p>
+    <div class="modal-actions"><button class="btn ghost" data-discard>Descartar o local</button><button class="btn primary" data-new>Salvar como novo</button></div>`);
+  b.querySelector("[data-new]").addEventListener("click", () => { close(); onNew(); });
+  b.querySelector("[data-discard]").addEventListener("click", () => { close(); onDiscard(); });
+}
+function syncLocalToAccount() {
+  const localDb = pendingLocal || readLocalDb();
+  const merged = ensureDb(JSON.parse(JSON.stringify(pendingCloud || { version: 2, projects: [] })));
+  const locals = (localDb.projects || []).slice();
+  const slugs = new Set(merged.projects.map(p => slugify(p.title)));
+  const finish = () => {
+    db = merged; setOwner(); localStorage.setItem(LS_KEY, JSON.stringify(db));
+    enterAppShell(); setSync("saving");
+    api.save(db).then(() => setSync("saved")).catch(e => { setSync("error"); toast("Falha ao salvar: " + e.message); });
+    toast("Projeto salvo na sua conta");
+  };
+  const step = i => {
+    if (i >= locals.length) return finish();
+    const lp = locals[i];
+    if (slugs.has(slugify(lp.title))) {
+      conflictDialog(lp.title,
+        () => { lp.id = uid(lp.title); merged.projects.push(lp); slugs.add(slugify(lp.title)); step(i + 1); },
+        () => step(i + 1));
+    } else { merged.projects.push(lp); slugs.add(slugify(lp.title)); step(i + 1); }
+  };
+  step(0);
+}
+
+// Banner sintético dentro de um projeto quando deslogado
+function guestBanner() {
+  if (api.isLoggedIn()) return "";
+  return `<div class="guest-banner">Você está deslogado. Entre ou crie uma conta para acessar este projeto em outros dispositivos. <button class="linkbtn" data-guest-login>Entrar</button></div>`;
 }
 
 /* ---------- Boot ---------- */
+function boot() {
+  const local = readLocalDb();
+  const hasLocal = (local.projects || []).length > 0;
+  const sess = api.session();
+  if (api.isLoggedIn() && sess) {
+    if (localStorage.getItem(LS_OWNER) === sess.username) return enterApp(); // sincronizado → nuvem
+    if (hasLocal) return adoptGuestLoggedIn(local);                          // logado com local não sinc.
+    return enterApp();                                                       // sem local → nuvem
+  }
+  enterGuest();                                                             // convidado (com ou sem projeto) → app + box
+}
 document.getElementById("btn-new").addEventListener("click", openNewProjectModal);
-document.getElementById("btn-export").addEventListener("click", exportJSON);
-document.getElementById("btn-import").addEventListener("click", importJSON);
-document.getElementById("btn-reset").addEventListener("click", reloadFromServer);
 document.getElementById("brand").addEventListener("click", goHome);
-document.getElementById("btn-logout").addEventListener("click", () => {
-  api.logout(); db = { version: 2, projects: [] }; renderAuth("login");
-});
-if (api.isLoggedIn()) enterApp(); else renderAuth("login");
+boot();
