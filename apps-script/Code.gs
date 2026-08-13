@@ -110,9 +110,9 @@ function coversFolder_() { return folderByProp_('COVERS_FOLDER_ID', 'PhonoProjec
 function dataFileName_(accountId) { return accountId + '.json'; }
 function readData_(accountId) {
   const it = dataFolder_().getFilesByName(dataFileName_(accountId));
-  if (!it.hasNext()) return { version: 2, projects: [] };
+  if (!it.hasNext()) return { version: 4, projects: [] };
   try { return JSON.parse(it.next().getBlob().getDataAsString()); }
-  catch (e) { return { version: 2, projects: [] }; }
+  catch (e) { return { version: 4, projects: [] }; }
 }
 function writeData_(accountId, obj) {
   const folder = dataFolder_();
@@ -139,7 +139,7 @@ function createAccount_(body) {
     const id = Utilities.getUuid();
     const salt = Utilities.getUuid();
     sheet_().appendRow([id, username, name, hashPassword_(password, salt), salt, new Date().toISOString().slice(0, 10)]);
-    const data = { version: 2, projects: [] };
+    const data = { version: 4, projects: [] };
     writeData_(id, data);
     return json_({ ok: true, token: makeToken_(id), name: name, username: username, data: data });
   } finally { lock.releaseLock(); }
@@ -156,6 +156,7 @@ function save_(body, aid) {
   const lock = LockService.getScriptLock(); lock.waitLock(15000);
   try {
     if (!body.data || typeof body.data !== 'object') return json_({ ok: false, error: 'dados inválidos' });
+    if (!Array.isArray(body.data.projects) || body.data.projects.length > 3) return json_({ ok: false, error: 'limite de 3 projetos por conta' });
     writeData_(aid, body.data);
     return json_({ ok: true });
   } finally { lock.releaseLock(); }

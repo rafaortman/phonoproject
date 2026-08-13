@@ -1,10 +1,9 @@
 /* ==========================================================================
-   Dashboard de Projeto Fonográfico — v2
-   Site estático (GitHub Pages). Estado inicial: data/projects.json.
-   Edições em localStorage. Export/Import move dados de volta ao repo.
+   Dashboard de Projeto Fonográfico — v4
+   Site estático (GitHub Pages), com modo local e sincronização por conta.
 
    Modelo:
-   - Projeto: people[], stages[] (configurável), tracks[].
+   - Projeto: people[], tracks[].
    - Etapa (stage): { id, label, mode: "holistic" | "instruments" }.
        Os rótulos são só sugestões — nenhum comportamento é amarrado ao nome.
    - Faixa (track): ficha + instruments[] (arranjo) + stageState por etapa.
@@ -17,10 +16,10 @@
    ========================================================================== */
 
 const LS_KEY = "fono-dashboard-v2";
+const LS_OWNER = "fono-owner"; // username dono do db local (sincronizado); ausente = local/convidado
+const ROUTE_KEY = "fono-route"; // sessionStorage: persiste somente durante a vida da aba
 
 const DEFAULT_STAGES = [
-  { id: "composicao", label: "Composição", mode: "holistic" },
-  { id: "gravacao",   label: "Gravação",   mode: "instruments" },
   { id: "edicao",     label: "Edição",     mode: "instruments" },
   { id: "premix",     label: "Pré-mix",    mode: "instruments" },
   { id: "mix",        label: "Mix",        mode: "instruments" },
@@ -63,30 +62,91 @@ let route = { view: "home", projectId: null, trackId: null };
 let cortinaEl = null, cortinaCleanup = null;
 const collapsedStages = new Set(); // etapas recolhidas (accordion) — estado de UI, não persistido
 const expandedPeople = new Set();  // músicos expandidos; começam TODOS recolhidos
+let tracksSectionOpen = true;
+let peopleSectionOpen = false;
+let trackInfoOpen = true;
+let stagesSectionOpen = true;
+const MAX_PROJECTS = 3;
 
 /* ---------- Persistence ---------- */
 // Etapas passaram a ser da faixa: cada faixa herda uma cópia própria das etapas
 // que eram do projeto (preserva stageState, que já vivia na faixa).
 function migrate() {
+  const upgradingToV4 = (+db.version || 0) < 4;
+  let changed = db.version !== 4;
   (db.projects || []).forEach(p => {
     (p.tracks || []).forEach(t => {
-      if (!Array.isArray(t.stages)) t.stages = p.stages ? JSON.parse(JSON.stringify(p.stages)) : [];
-      t.stageState = t.stageState || {};
+      if (!Array.isArray(t.stages)) { t.stages = p.stages ? JSON.parse(JSON.stringify(p.stages)) : []; changed = true; }
+      if (!t.stageState) { t.stageState = {}; changed = true; }
+      if (!Array.isArray(t.rejectedStageLabels)) { t.rejectedStageLabels = []; changed = true; }
+      if (!Array.isArray(t.producers)) { t.producers = []; changed = true; }
+      if (typeof t.lyricsChord !== "string") { t.lyricsChord = ""; changed = true; }
+      if (t.lyricsChordHeight != null && (!Number.isFinite(+t.lyricsChordHeight) || +t.lyricsChordHeight < 80 || +t.lyricsChordHeight > 2000)) {
+        delete t.lyricsChordHeight; changed = true;
+      }
+      if (Object.prototype.hasOwnProperty.call(t, "references")) { delete t.references; changed = true; }
+      if (upgradingToV4) {
+        const compositionIndex = t.stages.findIndex(s => s.id === "composicao" || (s.label || "").trim().toLowerCase() === "composição");
+        if (compositionIndex >= 0) {
+          const composition = t.stages[compositionIndex];
+          t.stages.splice(compositionIndex, 1);
+          delete t.stageState[composition.id];
+          changed = true;
+        }
+      }
+      if (Object.prototype.hasOwnProperty.call(t, "compositionStatus")) { delete t.compositionStatus; changed = true; }
+      if (Object.prototype.hasOwnProperty.call(t, "compositionNote")) { delete t.compositionNote; changed = true; }
+      if (upgradingToV4 && !t.baseStageId) {
+        const recording = t.stages.find(s => s.id === "gravacao" || (s.label || "").trim().toLowerCase() === "gravação");
+        if (recording) { t.baseStageId = recording.id; changed = true; }
+      }
+      const baseIndex = t.stages.findIndex(s => s.id === t.baseStageId);
+      if (baseIndex > 0) {
+        const base = t.stages.splice(baseIndex, 1)[0];
+        t.stages.unshift(base); changed = true;
+      }
     });
-    delete p.stages; // projeto não é mais dono das etapas
+    if (Object.prototype.hasOwnProperty.call(p, "stages")) { delete p.stages; changed = true; }
   });
+  db.version = 4;
+  return changed;
 }
-// Salva no cache local sempre; e no servidor com debounce (~1,5s) se logado.
+// Salva no cache local sempre; no servidor (debounce ~1,5s) só se logado E sincronizado.
 let saveTimer = null;
 function save() {
   localStorage.setItem(LS_KEY, JSON.stringify(db));
-  if (!api.isLoggedIn()) return;
+  if (!isSynced()) return;
   clearTimeout(saveTimer);
+  setSync("saving");
   saveTimer = setTimeout(() => {
-    api.save(db).catch(e => toast("Falha ao salvar no servidor: " + e.message));
+    api.save(db).then(() => setSync("saved")).catch(e => { setSync("error"); toast("Falha ao salvar: " + e.message); });
   }, 1500);
 }
 function ensureDb(data) { return (data && Array.isArray(data.projects)) ? data : { version: 2, projects: [] }; }
+function readLocalDb() { try { return ensureDb(JSON.parse(localStorage.getItem(LS_KEY) || "null")); } catch (e) { return { version: 2, projects: [] }; } }
+function hasLocalData() { return (readLocalDb().projects || []).length > 0; }
+// db local pertence à conta logada?
+function isSynced() { const s = api.session(); return !!(api.isLoggedIn() && s && localStorage.getItem(LS_OWNER) === s.username); }
+function setOwner() { const s = api.session(); if (s) localStorage.setItem(LS_OWNER, s.username); }
+function clearOwner() { localStorage.removeItem(LS_OWNER); }
+function slugify(s) {
+  return (s || "").toString().toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "")
+    .replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+}
+let syncHideTimer = null;
+function setSync(state) {
+  const el = document.getElementById("sync");
+  if (!el) return;
+  clearTimeout(syncHideTimer);
+  el.className = "sync " + state;
+  el.textContent = state === "saving" ? "salvando…" : state === "saved" ? "salvo ✓" : state === "error" ? "erro ao salvar" : "";
+  if (state === "saved" || state === "error") {
+    syncHideTimer = setTimeout(() => {
+      el.className = "sync";
+      el.textContent = "";
+    }, state === "saved" ? 2500 : 5000);
+  }
+}
 
 /* ---------- Images (client-side downscale → data URI) ---------- */
 function downscaleImage(file, maxDim, quality) {
@@ -158,6 +218,7 @@ function personRefs(p, id) {
   let n = 0;
   (p.tracks || []).forEach(t => {
     if ((t.composers || []).includes(id)) n++;
+    if ((t.producers || []).includes(id)) n++;
     (t.instruments || []).forEach(i => { if (i.personId === id) n++; });
   });
   return n;
@@ -165,6 +226,7 @@ function personRefs(p, id) {
 function doRemovePerson(p, id) {
   p.tracks.forEach(t => {
     t.composers = (t.composers || []).filter(c => c !== id);
+    t.producers = (t.producers || []).filter(x => x !== id);
     (t.instruments || []).forEach(i => { if (i.personId === id) i.personId = null; });
   });
   p.people = (p.people || []).filter(x => x.id !== id);
@@ -196,7 +258,8 @@ function instrStages(track) { return (track.stages || []).filter(s => s.mode ===
 // Próxima etapa da sequência padrão ainda não usada na faixa (rótulo editável depois)
 function suggestNextStage(track) {
   const used = new Set((track.stages || []).map(s => (s.label || "").toLowerCase()));
-  const next = DEFAULT_STAGES.find(d => !used.has(d.label.toLowerCase()));
+  const rejected = new Set((track.rejectedStageLabels || []).map(s => (s || "").trim().toLowerCase()));
+  const next = DEFAULT_STAGES.find(d => !used.has(d.label.toLowerCase()) && !rejected.has(d.label.toLowerCase()));
   return next
     ? { id: uid(next.id), label: next.label, mode: next.mode }
     : { id: uid("etapa"), label: "Nova etapa", mode: "holistic" };
@@ -214,48 +277,12 @@ function stageItems(p, track, stageId) {
   });
 }
 
-function stageProgress(p, track, stage) {
-  const st = ensureState(track, stage);
-  if (stage.mode === "holistic") return st.status === "done" ? 1 : st.status === "wip" ? 0.5 : 0;
-  if (st.signedOff) return 1;
-  const rows = stageItems(p, track, stage.id);
-  if (!rows.length) return 0;
-  const val = rows.reduce((a, r) => a + (r.state === "done" ? 1 : r.state === "wip" ? 0.5 : 0), 0);
-  return (val / rows.length) * 0.95;
-}
 function stageStatus(p, track, stage) {
   const st = ensureState(track, stage);
   if (stage.mode === "holistic") return st.status || "todo";
   if (st.signedOff) return "done";
   const rows = stageItems(p, track, stage.id);
   return rows.some(r => r.state !== "todo") ? "wip" : "todo";
-}
-function trackProgress(p, track) {
-  const stages = track.stages || [];
-  if (!stages.length) return 0;
-  return stages.reduce((s, st) => s + stageProgress(p, track, st), 0) / stages.length;
-}
-// Barra de uma única faixa, sobre as etapas dela
-function trackBar(p, t) {
-  let total = 0, done = 0, partial = 0;
-  for (const s of (t.stages || [])) {
-    total++;
-    const pr = stageProgress(p, t, s);
-    if (pr >= 1) done++; else partial += pr;
-  }
-  if (!total) return { pct: 0, donePct: 0, wipPct: 0 };
-  return { pct: Math.round((done + partial) / total * 100), donePct: done / total * 100, wipPct: partial / total * 100 };
-}
-// Barra geral do projeto: soma cada faixa sobre as etapas próprias dela
-function projectBar(p) {
-  let total = 0, done = 0, partial = 0;
-  for (const t of p.tracks) for (const s of (t.stages || [])) {
-    total++;
-    const pr = stageProgress(p, t, s);
-    if (pr >= 1) done++; else partial += pr;
-  }
-  if (!total) return { pct: 0, donePct: 0, wipPct: 0 };
-  return { pct: Math.round((done + partial) / total * 100), donePct: done / total * 100, wipPct: partial / total * 100 };
 }
 
 /* ---------- Rendering ---------- */
@@ -266,34 +293,53 @@ function render() {
   const p = route.projectId ? getProject(route.projectId) : null;
   if (route.view === "track" && p) { const t = getTrack(p, route.trackId); if (t) return renderTrack(p, t); }
   if (route.view === "project" && p) return renderProject(p);
-  route = { view: "home" }; renderHome();
+  route = { view: "home" }; rememberRoute(); renderHome();
+}
+function rememberRoute() { sessionStorage.setItem(ROUTE_KEY, JSON.stringify(route)); }
+function restoredRoute() {
+  let saved;
+  try { saved = JSON.parse(sessionStorage.getItem(ROUTE_KEY) || "null"); } catch (e) { return { view: "home" }; }
+  if (!saved || !["home", "project", "track"].includes(saved.view)) return { view: "home" };
+  if (saved.view === "home") return { view: "home" };
+  const p = getProject(saved.projectId);
+  if (!p) return { view: "home" };
+  if (saved.view === "project") return { view: "project", projectId: p.id };
+  const t = getTrack(p, saved.trackId);
+  return t ? { view: "track", projectId: p.id, trackId: t.id } : { view: "project", projectId: p.id };
 }
 // Navegação: empurra uma entrada no histórico do navegador e sobe o scroll.
 // (Só a navegação sobe o scroll — re-renders internos usam render()/rt() e não sobem.)
 function navTo(r) {
   route = r;
+  rememberRoute();
   history.pushState(r, "");
   render();
   window.scrollTo(0, 0);
 }
 function goHome() { navTo({ view: "home" }); }
-function goProject(id) { navTo({ view: "project", projectId: id }); }
-function goTrack(pid, tid) { navTo({ view: "track", projectId: pid, trackId: tid }); }
+function goProject(id) {
+  tracksSectionOpen = true;
+  peopleSectionOpen = false;
+  expandedPeople.clear();
+  navTo({ view: "project", projectId: id });
+}
+function goTrack(pid, tid) {
+  trackInfoOpen = true;
+  stagesSectionOpen = true;
+  navTo({ view: "track", projectId: pid, trackId: tid });
+}
 window.addEventListener("popstate", e => {
   route = e.state || { view: "home" };
+  rememberRoute();
   render();
   window.scrollTo(0, 0);
 });
 
-function progressBar(bar) {
-  return `<div class="progress">
-      <div class="seg-done" style="width:${bar.donePct}%"></div>
-      <div class="seg-wip" style="width:${bar.wipPct}%"></div>
-    </div>`;
-}
-
 /* ----- Home ----- */
 function renderHome() {
+  const newCard = db.projects.length < MAX_PROJECTS
+    ? `<button class="new-project-card" data-action="new"><span>Novo projeto</span></button>`
+    : "";
   const cards = db.projects.map(p => {
     const cls = classify(p.tracks.length);
     return `<div class="card ${p.cover ? "" : "no-cover"}" data-open="${p.id}">
@@ -312,13 +358,12 @@ function renderHome() {
   }).join("");
 
   app.innerHTML = `
+    ${contextBox()}
     <div class="section-head"><h2>Meus projetos</h2>
       <span class="count">${db.projects.length} projeto${db.projects.length === 1 ? "" : "s"}</span></div>
-    ${db.projects.length ? `<div class="grid">${cards}</div>` : `
-      <div class="empty"><h3>Nenhum projeto ainda</h3>
-        <p>Crie seu primeiro projeto fonográfico para começar.</p>
-        <button class="btn primary" data-action="new">+ Novo projeto</button></div>`}`;
+    <div class="grid">${cards}${newCard}</div>`;
 
+  wireContextBox();
   app.querySelectorAll("[data-open]").forEach(el => el.addEventListener("click", () => goProject(el.dataset.open)));
   const nb = app.querySelector('[data-action="new"]'); if (nb) nb.addEventListener("click", openNewProjectModal);
 }
@@ -329,10 +374,12 @@ function renderProject(p) {
   const nominal = projectNominal(p);
   const rows = p.tracks.map((t, i) => {
     const pend = nextAction(p, t);
+    const authors = (t.composers || []).map(id => personName(p, id)).filter(Boolean).join(", ");
     return `<div class="track-row" data-track="${t.id}">
         <span class="num">${i + 1}</span>
         <div class="track-row-main">
           <div class="track-row-title">${esc(t.title) || "<span class='faint'>Sem título</span>"}</div>
+          ${authors ? `<div class="track-authors">De: ${esc(authors)}</div>` : ""}
           <div class="track-row-sub">${esc(pend || "—")}</div>
         </div>
         <div class="stage-ctrls">
@@ -345,6 +392,7 @@ function renderProject(p) {
 
   app.innerHTML = `
     <div class="crumb back icon-btn" data-home>${icon("left")} Projetos</div>
+    ${guestBanner()}
     <div class="detail-head">
       <div class="proj-title-wrap">
         <div class="proj-cover ${p.cover ? "" : "empty"}" data-cover title="${p.cover ? "Trocar capa" : "Adicionar capa"}">
@@ -363,18 +411,18 @@ function renderProject(p) {
         <button class="btn danger del-btn" data-del-project title="Excluir projeto">${icon("can")}</button>
       </div>
     </div>
-    <div class="overall-box">
-      <div class="overall-title">Estado geral</div>
+    <div class="project-status-summary">
       ${nominal.length
         ? `<div class="nominal">${nominal.map(b => `<div class="nominal-row"><b>${b.count}</b><span>${esc(b.label)}</span></div>`).join("")}</div>`
         : `<div class="faint">Sem faixas ainda.</div>`}
     </div>
 
-    <div class="field proj-notes"><label>Observações gerais do projeto</label>
-      <textarea class="stage-note" data-proj-notes placeholder="Notas, decisões e pendências do projeto…">${esc(p.notes || "")}</textarea></div>
+    <div class="field proj-notes">
+      <textarea class="stage-note" data-proj-notes placeholder="Notas, decisões e pendências do projeto…" aria-label="Observações do projeto">${esc(p.notes || "")}</textarea></div>
 
-    <div class="elenco">
-      <div class="elenco-head">Músicos <span class="count">${(p.people || []).length}</span></div>
+    <div class="elenco section-accordion${peopleSectionOpen ? "" : " collapsed"}">
+      <h3 class="section-heading"><button class="section-accordion-head" data-section="people">${icon("chevron", peopleSectionOpen ? "" : "rot-right")}<span>Músicos <span class="count">${(p.people || []).length}</span></span></button></h3>
+      <div class="section-accordion-body">
       <div class="people-list">
         ${(p.people || []).map((x, i, arr) => `
           <div class="np-person${expandedPeople.has(x.id) ? "" : " collapsed"}" data-person="${x.id}">
@@ -401,13 +449,25 @@ function renderProject(p) {
           </div>`).join("")}
       </div>
       <div class="add-person-row with-btn"><input class="chip-input" data-add-person placeholder="Nome do músico" autocomplete="off"><button type="button" class="row-add" data-add-person-btn title="Adicionar músico">${icon("plus")}</button></div>
+      </div>
     </div>
 
-    ${p.tracks.length ? `<div class="track-list">${rows}</div>` :
-      `<div class="empty"><h3>Sem faixas</h3><p>Adicione a primeira faixa deste projeto.</p></div>`}
-    <div class="add-track-bar"><button class="btn primary" data-add-track>+ Adicionar faixa</button></div>`;
+    <div class="elenco section-accordion${tracksSectionOpen ? "" : " collapsed"}">
+      <h3 class="section-heading"><button class="section-accordion-head" data-section="tracks">${icon("chevron", tracksSectionOpen ? "" : "rot-right")}<span>Faixas <span class="count">${p.tracks.length}</span></span></button></h3>
+      <div class="section-accordion-body">
+        ${p.tracks.length ? `<div class="track-list">${rows}</div>` :
+          `<div class="empty"><h3>Sem faixas</h3><p>Adicione a primeira faixa deste projeto.</p></div>`}
+        <div class="add-track-bar"><button class="btn ghost" data-add-track>+ Adicionar faixa</button></div>
+      </div>
+    </div>`;
 
   app.querySelector("[data-home]").addEventListener("click", goHome);
+  app.querySelectorAll("[data-section]").forEach(btn => btn.addEventListener("click", () => {
+    if (btn.dataset.section === "people") peopleSectionOpen = !peopleSectionOpen;
+    else tracksSectionOpen = !tracksSectionOpen;
+    render();
+  }));
+  const gl = app.querySelector("[data-guest-login]"); if (gl) gl.addEventListener("click", () => openAuthModal("login"));
   app.querySelectorAll("[data-track]").forEach(el => el.addEventListener("click", () => goTrack(p.id, el.dataset.track)));
   app.querySelector("[data-add-track]").addEventListener("click", () => openTrackModal(p));
 
@@ -551,7 +611,6 @@ function projectNominal(p) {
 
 /* ----- Track detail ----- */
 function renderTrack(p, t) {
-  const allCollapsed = (t.stages || []).length > 0 && t.stages.every(s => collapsedStages.has(s.id));
   const idx = p.tracks.indexOf(t);
   const prev = p.tracks[idx - 1], next = p.tracks[idx + 1];
 
@@ -563,18 +622,22 @@ function renderTrack(p, t) {
       </div>
       <button class="btn danger del-btn" data-del-track title="Excluir faixa">${icon("can")}</button>
     </div>
-    <div class="overall-box"><div class="track-situacao">${esc(nextAction(p, t))}</div></div>
+    <section class="track-info section-accordion${trackInfoOpen ? "" : " collapsed"}">
+      <h3 class="section-heading"><button class="section-accordion-head" data-track-info>${icon("chevron", trackInfoOpen ? "" : "rot-right")}<span>Informações gerais</span></button></h3>
+      <div class="section-accordion-body">${renderFicha(p, t)}</div>
+    </section>
 
-    ${renderFicha(p, t)}
-
-    <h3 class="stages-title">Etapas de produção</h3>
-    <div class="stages">${(t.stages || []).length
-      ? t.stages.map(s => renderStage(p, t, s)).join("")
-      : `<div class="instr-empty">Nenhuma etapa ainda. Crie a primeira abaixo.</div>`}</div>
-    <div class="add-stage-bar">
-      <button class="btn ghost small icon-btn" data-add-stage>${icon("plus")} etapa</button>
-      ${(t.stages || []).length > 1 ? `<button class="btn ghost small" data-toggle-all>${allCollapsed ? "Expandir todas" : "Recolher todas"}</button>` : ""}
-    </div>
+    <section class="track-stages section-accordion${stagesSectionOpen ? "" : " collapsed"}">
+      <h3 class="section-heading"><button class="section-accordion-head" data-stages-section>${icon("chevron", stagesSectionOpen ? "" : "rot-right")}<span>Etapas de produção</span></button></h3>
+      <div class="section-accordion-body">
+        <div class="stages">${(t.stages || []).length
+          ? t.stages.map(s => renderStage(p, t, s)).join("")
+          : `<div class="instr-empty">Nenhuma etapa ainda. Crie a primeira abaixo.</div>`}</div>
+        <div class="add-stage-bar">
+          <button class="btn ghost small icon-btn" data-add-stage>${icon("plus")} etapa</button>
+        </div>
+      </div>
+    </section>
 
     <div class="track-nav">
       <button class="ic-btn" data-track-prev title="Faixa anterior" ${prev ? "" : "disabled"}>${icon("left")}</button>
@@ -583,7 +646,7 @@ function renderTrack(p, t) {
     </div>
 
     <div class="track-foot">
-      <button class="btn primary" data-done>✓ Concluir</button>
+      <button class="btn ghost icon-btn" data-foot-back>${icon("left")} Voltar</button>
       <button class="btn ghost icon-btn" data-new-track>${icon("plus")} Nova faixa</button>
     </div>
 
@@ -691,8 +754,11 @@ function attachCortina(input, opts) {
 function renderFicha(p, t) {
   const compChips = (t.composers || []).map(id =>
     `<span class="chip">${esc(personName(p, id))}<button data-rm-comp="${id}" title="Remover">×</button></span>`).join("");
+  const producerChips = (t.producers || []).map(id =>
+    `<span class="chip">${esc(personName(p, id))}<button data-rm-producer="${id}" title="Remover">×</button></span>`).join("");
   return `<div class="ficha">
-    <div class="field"><label>Compositores</label>
+    <div class="field composition-field">
+      <label>Compositores</label>
       <div class="chips">${compChips}<input class="chip-input" data-add-comp list="people-list" placeholder="Nome" autocomplete="off"><button type="button" class="row-add" data-add-comp-btn title="Adicionar compositor">${icon("plus")}</button></div>
     </div>
     <div class="ficha-grid">
@@ -701,17 +767,21 @@ function renderFicha(p, t) {
       <div class="field"><label>Tom</label><input data-f="key" value="${esc(t.key)}" placeholder="Ex.: Am"></div>
       <div class="field"><label>Duração</label><input data-f="duration" value="${esc(t.duration)}" placeholder="Ex.: 3:42"></div>
     </div>
-    <div class="field"><label>Referências</label>
-      <textarea data-f="references" placeholder="Faixas de referência, links, o que buscar…">${esc(t.references)}</textarea></div>
-    <div class="field"><label>Observações gerais</label>
+    <div class="field"><label>Produtor fonográfico</label>
+      <div class="chips">${producerChips}<input class="chip-input" data-add-producer list="people-list" placeholder="Nome" autocomplete="off"><button type="button" class="row-add" data-add-producer-btn title="Adicionar produtor fonográfico">${icon("plus")}</button></div>
+    </div>
+    <div class="field"><label>Letra/cifra</label>
+      <textarea class="lyrics-chord" data-f="lyricsChord" placeholder="Letra e cifra…"${t.lyricsChordHeight ? ` style="height:${Math.round(+t.lyricsChordHeight)}px"` : ""}>${esc(t.lyricsChord || "")}</textarea></div>
+    <div class="field"><label>Observações</label>
       <textarea data-f="notes" placeholder="Pendências e decisões da faixa…">${esc(t.notes)}</textarea></div>
   </div>`;
 }
 
 // Controles do cabeçalho da etapa: subir / descer / remover
-function stageCtrls(idx, n) {
+function stageCtrls(t, stage, idx, n) {
+  if (stage.id === t.baseStageId) return "";
   return `<div class="stage-ctrls">
-    <button class="ic-btn" data-move="up" title="Subir" ${idx === 0 ? "disabled" : ""}>${icon("up")}</button>
+    <button class="ic-btn" data-move="up" title="Subir" ${idx <= (t.baseStageId ? 1 : 0) ? "disabled" : ""}>${icon("up")}</button>
     <button class="ic-btn" data-move="down" title="Descer" ${idx === n - 1 ? "disabled" : ""}>${icon("down")}</button>
     <button class="ic-btn danger" data-stage-del title="Remover etapa">${icon("close")}</button>
   </div>`;
@@ -730,7 +800,7 @@ function renderStage(p, t, stage) {
           <button class="accordion-tri" data-accordion title="Recolher/expandir">${icon("chevron", collapsed ? "rot-right" : "")}</button>
           <input class="stage-name-input" data-stage-rename value="${esc(stage.label)}" size="${Math.max(2, (stage.label || "").length)}" placeholder="Nome da etapa" autocomplete="off">
         </div>
-        ${stageCtrls(idx, t.stages.length)}
+        ${stageCtrls(t, stage, idx, t.stages.length)}
       </div>
       <div class="stage-body">
         <button class="holo-state ${status}" data-cycle title="Alternar estado">${icon(status === "done" ? "check" : status === "wip" ? "pause" : "stop")}<span>${STATE_LABEL[status]}</span></button>
@@ -772,7 +842,7 @@ function renderStage(p, t, stage) {
       <div class="stage-name">
         <button class="accordion-tri" data-accordion title="Recolher/expandir">${icon("chevron", collapsed ? "rot-right" : "")}</button>
         <input class="stage-name-input" data-stage-rename value="${esc(stage.label)}" size="${Math.max(2, (stage.label || "").length)}" placeholder="Nome da etapa" autocomplete="off"></div>
-      ${stageCtrls(idx, t.stages.length)}
+      ${stageCtrls(t, stage, idx, t.stages.length)}
     </div>
     <div class="stage-body">
       <div class="instr-list">${body || `<div class="instr-empty">${esc(meter)}</div>`}</div>
@@ -793,6 +863,11 @@ function wireTrack(p, t) {
   app.querySelector("[data-proj]").addEventListener("click", () => goProject(p.id));
 
   app.querySelector("[data-title]").addEventListener("change", e => { t.title = e.target.value.trim(); save(); });
+  const trackInfo = app.querySelector("[data-track-info]");
+  if (trackInfo) trackInfo.addEventListener("click", () => { trackInfoOpen = !trackInfoOpen; renderTrack(p, t); });
+  const stagesSection = app.querySelector("[data-stages-section]");
+  if (stagesSection) stagesSection.addEventListener("click", () => { stagesSectionOpen = !stagesSectionOpen; renderTrack(p, t); });
+  app.querySelector("[data-foot-back]").addEventListener("click", () => goProject(p.id));
 
   // ficha fields
   app.querySelectorAll("[data-f]").forEach(el => el.addEventListener("change", () => {
@@ -800,6 +875,15 @@ function wireTrack(p, t) {
     t[k] = k === "bpm" ? (el.value.trim() || null) : el.value;
     save();
   }));
+  const lyricsChord = app.querySelector(".lyrics-chord");
+  if (lyricsChord) lyricsChord.addEventListener("pointerdown", () => {
+    const initialHeight = lyricsChord.offsetHeight;
+    const rememberHeight = () => {
+      const height = Math.round(lyricsChord.offsetHeight);
+      if (height !== initialHeight) { t.lyricsChordHeight = Math.max(80, Math.min(2000, height)); save(); }
+    };
+    window.addEventListener("pointerup", rememberHeight, { once: true });
+  });
   // composers
   app.querySelectorAll("[data-rm-comp]").forEach(b => b.addEventListener("click", () => {
     t.composers = (t.composers || []).filter(id => id !== b.dataset.rmComp); save(); rt();
@@ -814,6 +898,20 @@ function wireTrack(p, t) {
   const addCompBtn = app.querySelector("[data-add-comp-btn]");
   if (addCompBtn) addCompBtn.addEventListener("click", doAddComp);
 
+  // produtores fonográficos (vários; nomes novos entram nos músicos do projeto)
+  app.querySelectorAll("[data-rm-producer]").forEach(b => b.addEventListener("click", () => {
+    t.producers = (t.producers || []).filter(id => id !== b.dataset.rmProducer); save(); rt();
+  }));
+  const addProducer = app.querySelector("[data-add-producer]");
+  const doAddProducer = () => {
+    const id = ensurePerson(p, addProducer.value);
+    if (id) { t.producers = t.producers || []; if (!t.producers.includes(id)) t.producers.push(id); }
+    save(); rt();
+  };
+  if (addProducer) addProducer.addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); doAddProducer(); } });
+  const addProducerBtn = app.querySelector("[data-add-producer-btn]");
+  if (addProducerBtn) addProducerBtn.addEventListener("click", doAddProducer);
+
   app.querySelector("[data-del-track]").addEventListener("click", () => {
     confirmDialog(`Excluir a faixa "${t.title || "sem título"}"?`,
       () => { p.tracks = p.tracks.filter(x => x.id !== t.id); save(); goProject(p.id); toast("Faixa removida"); },
@@ -821,13 +919,6 @@ function wireTrack(p, t) {
   });
 
   app.querySelector("[data-add-stage]").addEventListener("click", () => { t.stages.push(suggestNextStage(t)); save(); rt(); });
-  const toggleAll = app.querySelector("[data-toggle-all]");
-  if (toggleAll) toggleAll.addEventListener("click", () => {
-    const all = t.stages.every(s => collapsedStages.has(s.id));
-    t.stages.forEach(s => all ? collapsedStages.delete(s.id) : collapsedStages.add(s.id));
-    rt();
-  });
-  app.querySelector("[data-done]").addEventListener("click", () => goProject(p.id));
   app.querySelector("[data-new-track]").addEventListener("click", () => openTrackModal(p));
   const idx = p.tracks.indexOf(t);
   const prevBtn = app.querySelector("[data-track-prev]"), nextBtn = app.querySelector("[data-track-next]");
@@ -853,14 +944,23 @@ function wireTrack(p, t) {
     if (rename) {
       rename.addEventListener("input", () => { rename.size = Math.max(2, rename.value.length); });
       rename.addEventListener("change", () => {
-        stage.label = rename.value.trim() || stage.label;
+        const oldLabel = stage.label;
+        const newLabel = rename.value.trim() || oldLabel;
+        if (newLabel.toLowerCase() !== oldLabel.toLowerCase()) {
+          t.rejectedStageLabels = t.rejectedStageLabels || [];
+          if (!t.rejectedStageLabels.some(x => x.toLowerCase() === oldLabel.toLowerCase())) t.rejectedStageLabels.push(oldLabel);
+        }
+        stage.label = newLabel;
         rename.value = stage.label; rename.size = Math.max(2, rename.value.length); save();
       });
     }
 
     const stageDel = card.querySelector("[data-stage-del]");
     if (stageDel) stageDel.addEventListener("click", () => {
+      if (sid === t.baseStageId) return;
       confirmDialog(`Remover a etapa "${stage.label}" desta faixa? O progresso dela será descartado.`, () => {
+        t.rejectedStageLabels = t.rejectedStageLabels || [];
+        if (!t.rejectedStageLabels.some(x => x.toLowerCase() === stage.label.toLowerCase())) t.rejectedStageLabels.push(stage.label);
         t.stages = t.stages.filter(s => s.id !== sid);
         if (t.stageState) delete t.stageState[sid];
         save(); rt();
@@ -871,7 +971,7 @@ function wireTrack(p, t) {
     card.querySelectorAll("[data-move]").forEach(btn => btn.addEventListener("click", () => {
       const i = t.stages.findIndex(s => s.id === sid);
       const j = btn.dataset.move === "up" ? i - 1 : i + 1;
-      if (i < 0 || j < 0 || j >= t.stages.length) return;
+      if (sid === t.baseStageId || i < 0 || j < 0 || j >= t.stages.length || (t.baseStageId && j === 0)) return;
       [t.stages[i], t.stages[j]] = [t.stages[j], t.stages[i]];
       save(); rt();
     }));
@@ -989,6 +1089,7 @@ function confirmDialog(message, onConfirm, opts = {}) {
 }
 
 function openNewProjectModal() {
+  if ((db.projects || []).length >= MAX_PROJECTS) return;
   const { b, close } = modal(`
     <h3>Novo projeto fonográfico</h3>
     <div class="field"><label>Título do projeto</label><input id="np-title" placeholder="Ex.: Blague II" autocomplete="off"></div>
@@ -1014,68 +1115,20 @@ function openTrackModal(p) {
   const { b, close } = modal(`
     <h3>Nova faixa</h3>
     <div class="field"><label>Título</label><input id="tk-title" placeholder="Título da faixa" autocomplete="off"></div>
-    <div class="field"><label>Compositores</label>
-      <div class="chips" id="tk-chips"><input class="chip-input" id="tk-comp" list="people-list" placeholder="Nome" autocomplete="off"><button type="button" class="row-add" id="tk-comp-add" title="Adicionar compositor">${icon("plus")}</button></div></div>
-    <div class="field"><label>Estilo / gênero</label><input id="tk-style" placeholder="Opcional"></div>
-    <p class="hint">BPM, tom, duração, referências e instrumentos você preenche na tela da faixa.</p>
-    <div class="modal-actions"><button class="btn ghost" data-cancel>Cancelar</button><button class="btn primary" data-ok>Criar faixa</button></div>
-    ${peopleDatalist(p)}`);
+    <div class="modal-actions"><button class="btn ghost" data-cancel>Cancelar</button><button class="btn primary" data-ok>Criar faixa</button></div>`);
   const title = b.querySelector("#tk-title"); title.focus();
-  const composers = [];
-  const chips = b.querySelector("#tk-chips"); const compInput = b.querySelector("#tk-comp");
-  const redrawChips = () => {
-    chips.querySelectorAll(".chip").forEach(c => c.remove());
-    composers.forEach(id => {
-      const el = document.createElement("span"); el.className = "chip";
-      el.innerHTML = `${esc(personName(p, id))}<button title="Remover">×</button>`;
-      el.querySelector("button").addEventListener("click", () => { composers.splice(composers.indexOf(id), 1); redrawChips(); });
-      chips.insertBefore(el, compInput);
-    });
-  };
-  const addComp = () => {
-    const id = ensurePerson(p, compInput.value);
-    if (id && !composers.includes(id)) composers.push(id);
-    compInput.value = ""; save(); redrawChips(); compInput.focus();
-  };
-  compInput.addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); addComp(); } });
-  b.querySelector("#tk-comp-add").addEventListener("click", addComp);
   b.querySelector("[data-cancel]").addEventListener("click", close);
   const create = () => {
     const tt = title.value.trim(); if (!tt) return title.focus();
     const track = { id: uid(tt), title: tt,
-      composers: composers.slice(), style: b.querySelector("#tk-style").value.trim(),
-      bpm: null, key: "", duration: "", references: "", notes: "", instruments: [], stages: [], stageState: {} };
+      composers: [], style: "",
+      bpm: null, key: "", duration: "", lyricsChord: "", lyricsChordHeight: null, notes: "", producers: [], instruments: [],
+      baseStageId: "gravacao", stages: [{ id: "gravacao", label: "Gravação", mode: "instruments" }],
+      rejectedStageLabels: [], stageState: { gravacao: { signedOff: false, note: "", items: {} } } };
     p.tracks.push(track); save(); close(); goTrack(p.id, track.id); toast("Faixa criada");
   };
   b.querySelector("[data-ok]").addEventListener("click", create);
-}
-
-/* ---------- Export / Import / Reset ---------- */
-function exportJSON() {
-  const blob = new Blob([JSON.stringify(db, null, 2)], { type: "application/json" });
-  const url = URL.createObjectURL(blob); const a = document.createElement("a");
-  a.href = url; a.download = "projects.json"; a.click(); URL.revokeObjectURL(url);
-  toast("projects.json exportado — commite no repo para salvar");
-}
-function importJSON() {
-  const inp = document.createElement("input"); inp.type = "file"; inp.accept = "application/json,.json";
-  inp.addEventListener("change", () => {
-    const f = inp.files[0]; if (!f) return; const r = new FileReader();
-    r.onload = () => { try { const parsed = JSON.parse(r.result);
-      if (!parsed || !Array.isArray(parsed.projects)) throw new Error("formato inválido");
-      db = parsed; migrate(); save(); goHome(); toast("Dados importados — salvando na sua conta…"); }
-      catch (e) { toast("Arquivo inválido: " + e.message); } };
-    r.readAsText(f);
-  });
-  inp.click();
-}
-function reloadFromServer() {
-  confirmDialog("Descartar edições locais e recarregar do servidor?", () => {
-    api.load().then(data => {
-      db = ensureDb(data); migrate(); localStorage.setItem(LS_KEY, JSON.stringify(db));
-      goHome(); toast("Recarregado do servidor");
-    }).catch(e => toast(e.message));
-  }, { danger: true, okLabel: "Descartar" });
+  title.addEventListener("keydown", e => { if (e.key === "Enter") create(); });
 }
 
 /* ---------- Toast ---------- */
@@ -1087,67 +1140,233 @@ function toast(msg) {
   clearTimeout(toastTimer); toastTimer = setTimeout(() => el.classList.remove("show"), 2600);
 }
 
-/* ---------- Autenticação ---------- */
-function setChrome(on) {
-  document.getElementById("topbar").hidden = !on;
-  if (on) { const s = api.session(); document.getElementById("who").textContent = s ? (s.name || s.username || "") : ""; }
+/* ---------- Autenticação (4 estados) ---------- */
+const DISC_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960" fill="currentColor" width="42" height="42"><path d="M480-316q70 0 120-47.5T650-480q0-71-49.5-120.5T480-650q-69 0-116.5 50T316-480q0 69 47.5 116.5T480-316Zm0-104q-25 0-42.5-17.5T420-480q0-25 17.5-42.5T480-540q25 0 42.5 17.5T540-480q0 25-17.5 42.5T480-420Zm0 340q-83 0-156-31.5T197-197q-54-54-85.5-127T80-480q0-83 31.5-156T197-763q54-54 127-85.5T480-880q83 0 156 31.5T763-763q54 54 85.5 127T880-480q0 83-31.5 156T763-197q-54 54-127 85.5T480-80Z"/></svg>`;
+let pendingLocal = null, pendingCloud = null;
+
+// Preenche a topbar: convidado (Entrar) · logado (nome + sync + Sair) · não-sinc (nome + chip + Sair)
+function updateChrome() {
+  const slot = document.getElementById("authslot");
+  const sess = api.session();
+  if (api.isLoggedIn() && sess && isSynced()) {
+    slot.innerHTML = `<span class="who">${esc(sess.name || sess.username)}</span><span class="sync" id="sync"></span><button class="btn ghost small" data-act="logout">Sair</button>`;
+  } else if (api.isLoggedIn() && sess) {
+    slot.innerHTML = `<span class="who">${esc(sess.name || sess.username)}</span><span class="sync" id="sync"></span><span class="chip-local">não sincronizado</span><button class="btn ghost small" data-act="logout">Sair</button>`;
+  } else {
+    slot.innerHTML = `<button class="btn ghost small" data-act="login">Entrar</button>`;
+  }
+  slot.querySelectorAll("[data-act]").forEach(b => b.addEventListener("click", () => {
+    const a = b.dataset.act;
+    if (a === "logout") doLogout();
+    else if (a === "login") openAuthModal("login");
+    else if (a === "signup") openAuthModal("signup");
+  }));
 }
-function afterAuth(data) {
-  db = ensureDb(data); migrate();
-  localStorage.setItem(LS_KEY, JSON.stringify(db));
-  setChrome(true);
-  route = { view: "home" }; history.replaceState(route, ""); render();
+
+function enterAppShell() { updateChrome(); route = restoredRoute(); history.replaceState(route, ""); rememberRoute(); render(); }
+function enterGuest() {
+  db = readLocalDb();
+  if (migrate()) localStorage.setItem(LS_KEY, JSON.stringify(db));
+  enterAppShell();
+}
+function adoptCloud(data) {
+  db = ensureDb(data); const migrated = migrate(); setOwner(); localStorage.setItem(LS_KEY, JSON.stringify(db));
+  enterAppShell(); setSync("saved");
+  if (migrated) api.save(db).catch(e => { setSync("error"); toast("Falha ao migrar dados: " + e.message); });
+}
+function adoptGuestLoggedIn(local) {
+  db = ensureDb(local); migrate(); clearOwner(); localStorage.setItem(LS_KEY, JSON.stringify(db));
+  enterAppShell();
 }
 async function enterApp() {
-  app.innerHTML = `<div class="auth"><div class="auth-card"><p class="auth-loading">Carregando…</p></div></div>`;
-  try { afterAuth(await api.load()); }
-  catch (e) { api.clearSession(); toast(e.message || "Sessão expirada"); renderAuth("login"); }
+  app.innerHTML = `<div class="ctx-box"><p class="auth-loading">Carregando…</p></div>`;
+  try { adoptCloud(await api.load()); }
+  catch (e) { api.clearSession(); clearOwner(); toast(e.message || "Sessão expirada"); boot(); }
 }
-function renderAuth(mode) {
-  setChrome(false);
-  const isLogin = mode !== "signup";
-  app.innerHTML = `
-    <div class="auth">
-      <div class="auth-card">
-        <div class="auth-logo"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960" fill="currentColor" width="40" height="40"><path d="M480-316q70 0 120-47.5T650-480q0-71-49.5-120.5T480-650q-69 0-116.5 50T316-480q0 69 47.5 116.5T480-316Zm0-104q-25 0-42.5-17.5T420-480q0-25 17.5-42.5T480-540q25 0 42.5 17.5T540-480q0 25-17.5 42.5T480-420Zm0 340q-83 0-156-31.5T197-197q-54-54-85.5-127T80-480q0-83 31.5-156T197-763q54-54 127-85.5T480-880q83 0 156 31.5T763-763q54 54 85.5 127T880-480q0 83-31.5 156T763-197q-54 54-127 85.5T480-80Z"/></svg></div>
-        <h2>${isLogin ? "Entrar" : "Criar conta"}</h2>
-        ${isLogin ? "" : `<div class="field"><label>Nome</label><input id="au-name" autocomplete="name"></div>`}
-        <div class="field"><label>Usuário</label><input id="au-user" autocomplete="username"></div>
-        <div class="field"><label>Senha</label><input id="au-pass" type="password" autocomplete="${isLogin ? "current-password" : "new-password"}"></div>
-        ${isLogin ? "" : `<div class="field"><label>Cupom</label><input id="au-coupon" autocomplete="off"></div>`}
-        <div class="auth-msg" id="au-msg"></div>
-        <button class="btn primary auth-go" id="au-go">${isLogin ? "Entrar" : "Criar conta"}</button>
-        <div class="auth-alt">${isLogin
-          ? `Não tem conta? <button class="linkbtn" data-auth="signup">Criar conta</button>`
-          : `Já tem conta? <button class="linkbtn" data-auth="login">Entrar</button>`}</div>
-      </div>
-    </div>`;
+let loggingOut = false;
+async function doLogout() {
+  if (loggingOut) return;
+  const wasSynced = isSynced();
+  if (wasSynced) {
+    loggingOut = true;
+    clearTimeout(saveTimer);
+    setSync("saving");
+    try { await api.save(db); }
+    catch (e) {
+      loggingOut = false;
+      setSync("error");
+      toast("Não foi possível salvar antes de sair: " + e.message);
+      return;
+    }
+  }
+  api.logout(); clearOwner();
+  if (wasSynced) { localStorage.removeItem(LS_KEY); db = { version: 2, projects: [] }; }
+  loggingOut = false;
+  boot();
+}
 
-  const msg = t => { document.getElementById("au-msg").textContent = t || ""; };
-  const go = document.getElementById("au-go");
+// Box de contexto no topo da home (antes do .section-head), conforme o estado
+function contextBox() {
+  const sess = api.session();
+  if (api.isLoggedIn() && sess && isSynced()) return "";
+  if (api.isLoggedIn() && sess) {
+    return `<div class="ctx-box">
+      <div class="ctx-text"><b>Projeto encontrado neste dispositivo</b><p>Ele ainda não está na sua conta. Salve para acessá-lo de outros dispositivos.</p></div>
+      <div class="ctx-actions"><button class="btn ghost" data-ctx="discard">Descartar</button><button class="btn primary" data-ctx="save">Salvar na minha conta</button></div>
+    </div>`;
+  }
+  if ((db.projects || []).length) {
+    return `<div class="ctx-box">
+      <div class="ctx-text"><b>Modo local</b><p>Seus projetos ficam salvos só neste dispositivo. Crie uma conta para guardá-los na nuvem e acessar de qualquer lugar. <button class="linkbtn" data-ctx="info">Entenda como funciona</button>.</p></div>
+      <div class="ctx-actions"><button class="btn ghost" data-ctx="login">Entrar</button></div>
+    </div>`;
+  }
+  return `<div class="ctx-box welcome-box">
+    <div class="ctx-text"><b>Bem-vindo</b><p>Organize a produção dos seus projetos musicais — faixas, pessoas, instrumentos e etapas de produção. Seus projetos ficam salvos só neste dispositivo. <button class="linkbtn" data-ctx="info">Entenda como funciona</button>.</p></div>
+    <div class="ctx-actions"><button class="btn primary" data-ctx="new">Criar projeto</button><button class="btn ghost" data-ctx="login">Entrar</button></div>
+  </div>`;
+}
+function wireContextBox() {
+  app.querySelectorAll("[data-ctx]").forEach(b => b.addEventListener("click", () => {
+    const a = b.dataset.ctx;
+    if (a === "new") openNewProjectModal();
+    else if (a === "login") openAuthModal("login");
+    else if (a === "signup") openAuthModal("signup");
+    else if (a === "info") openStorageInfo();
+    else if (a === "save") saveLocalToAccount();
+    else if (a === "discard") discardLocalProjects();
+  }));
+}
+function discardLocalProjects() {
+  confirmDialog("Descartar os projetos deste dispositivo? As alterações locais que ainda não foram salvas na sua conta serão perdidas.", () => {
+    api.load().then(data => {
+      pendingLocal = null; pendingCloud = null;
+      adoptCloud(data);
+      toast("Projetos locais descartados");
+    }).catch(e => toast(e.message));
+  }, { danger: true, okLabel: "Descartar" });
+}
+function saveLocalToAccount() {
+  pendingLocal = readLocalDb();
+  const run = () => syncLocalToAccount();
+  if (pendingCloud) run();
+  else api.load().then(c => { pendingCloud = ensureDb(c); run(); }).catch(e => toast(e.message));
+}
+function openStorageInfo() {
+  const { b, close } = modal(`
+    <h3>Como funciona o armazenamento?</h3>
+    <p class="confirm-msg">Sem conta, seus projetos ficam salvos <b>só neste navegador</b> (armazenamento local). Não se perdem ao recarregar, mas ficam presos a este dispositivo.</p>
+    <p class="confirm-msg">Com uma conta, eles são <b>salvos na nuvem</b> automaticamente — você acessa de qualquer lugar e não corre risco de perder se limpar o navegador.</p>
+    <div class="modal-actions"><button class="btn primary" data-ok>Entendi</button></div>`);
+  b.querySelector("[data-ok]").addEventListener("click", close);
+}
+
+/* ----- Login / criar conta (modal) ----- */
+function openAuthModal(mode) {
+  const isLogin = mode !== "signup";
+  const { b, close } = modal(`
+    <div class="auth-logo">${DISC_SVG}</div>
+    <h3 class="auth-title">${isLogin ? "Entrar" : "Criar conta"}</h3>
+    ${isLogin ? "" : `<div class="field"><label>Nome</label><input id="au-name" autocomplete="name"></div>`}
+    <div class="field"><label>Usuário</label><input id="au-user" autocomplete="username"></div>
+    <div class="field"><label>Senha</label><input id="au-pass" type="password" autocomplete="${isLogin ? "current-password" : "new-password"}"></div>
+    ${isLogin ? "" : `<div class="field"><label>Cupom</label><input id="au-coupon" autocomplete="off"></div>`}
+    <div class="auth-msg" id="au-msg"></div>
+    <div class="modal-actions"><button class="btn ghost" data-cancel>Cancelar</button><button class="btn primary" id="au-go">${isLogin ? "Entrar" : "Criar conta"}</button></div>
+    <div class="auth-alt">${isLogin ? `Não tem conta? <button class="linkbtn" data-swap="signup">Criar conta</button>` : `Já tem conta? <button class="linkbtn" data-swap="login">Entrar</button>`}</div>`);
+  const msg = t => { b.querySelector("#au-msg").textContent = t || ""; };
+  const go = b.querySelector("#au-go");
   const submit = () => {
-    const user = document.getElementById("au-user").value.trim();
-    const pass = document.getElementById("au-pass").value;
+    const user = b.querySelector("#au-user").value.trim();
+    const pass = b.querySelector("#au-pass").value;
     if (!user || !pass) return msg("Preencha usuário e senha.");
     go.disabled = true; msg(isLogin ? "Entrando…" : "Criando conta…");
-    const p = isLogin
-      ? api.login(user, pass)
-      : api.createAccount(document.getElementById("au-name").value.trim(), user, pass, document.getElementById("au-coupon").value.trim());
-    p.then(r => afterAuth(r.data)).catch(e => { go.disabled = false; msg(e.message); });
+    const p = isLogin ? api.login(user, pass)
+      : api.createAccount(b.querySelector("#au-name").value.trim(), user, pass, b.querySelector("#au-coupon").value.trim());
+    p.then(r => { close(); onAuthed(r.data); }).catch(e => { go.disabled = false; msg(e.message); });
   };
   go.addEventListener("click", submit);
-  app.querySelectorAll("[data-auth]").forEach(b => b.addEventListener("click", () => renderAuth(b.dataset.auth)));
-  app.querySelectorAll(".auth-card input").forEach(inp => inp.addEventListener("keydown", e => { if (e.key === "Enter") submit(); }));
-  const first = app.querySelector(".auth-card input"); if (first) first.focus();
+  b.querySelector("[data-cancel]").addEventListener("click", close);
+  b.querySelector("[data-swap]").addEventListener("click", () => { close(); openAuthModal(b.querySelector("[data-swap]").dataset.swap); });
+  b.querySelectorAll("input").forEach(inp => inp.addEventListener("keydown", e => { if (e.key === "Enter") submit(); }));
+  const first = b.querySelector("input"); if (first) first.focus();
+}
+function onAuthed(cloudData) {
+  const sess = api.session();
+  const local = readLocalDb();
+  const hasGuest = (local.projects || []).length > 0 && localStorage.getItem(LS_OWNER) !== (sess || {}).username;
+  if (hasGuest) { pendingCloud = ensureDb(cloudData); adoptGuestLoggedIn(local); } // box oferece "Salvar na minha conta"
+  else adoptCloud(cloudData);
+}
+
+/* ----- Reconciliação por slug ----- */
+function conflictDialog(title, onNew, onDiscard) {
+  const { b, close } = modal(`
+    <h3>Já existe "${esc(title)}" na sua conta</h3>
+    <p class="confirm-msg">Um projeto com esse nome já está na sua conta. O que fazer com o deste dispositivo?</p>
+    <div class="modal-actions"><button class="btn ghost" data-discard>Descartar o local</button><button class="btn primary" data-new>Salvar como novo</button></div>`);
+  b.querySelector("[data-new]").addEventListener("click", () => { close(); onNew(); });
+  b.querySelector("[data-discard]").addEventListener("click", () => { close(); onDiscard(); });
+}
+function projectLimitDialog(title, onDiscard, onCancel) {
+  const { b, close } = modal(`
+    <h3>Limite de ${MAX_PROJECTS} projetos</h3>
+    <p class="confirm-msg">Não há espaço na conta para salvar "${esc(title)}". Descarte este projeto local para continuar ou cancele a sincronização.</p>
+    <div class="modal-actions"><button class="btn ghost" data-cancel-sync>Cancelar sincronização</button><button class="btn danger" data-discard>Descartar o local</button></div>`);
+  b.querySelector("[data-discard]").addEventListener("click", () => { close(); onDiscard(); });
+  b.querySelector("[data-cancel-sync]").addEventListener("click", () => { close(); onCancel(); });
+}
+function syncLocalToAccount() {
+  const localDb = pendingLocal || readLocalDb();
+  const merged = ensureDb(JSON.parse(JSON.stringify(pendingCloud || { version: 2, projects: [] })));
+  const locals = (localDb.projects || []).slice();
+  const slugs = new Set(merged.projects.map(p => slugify(p.title)));
+  const finish = () => {
+    db = merged; clearOwner(); localStorage.setItem(LS_KEY, JSON.stringify(db));
+    enterAppShell(); setSync("saving");
+    api.save(db).then(() => {
+      setOwner(); pendingLocal = null; pendingCloud = null;
+      updateChrome(); render(); setSync("saved");
+      toast("Projeto salvo na sua conta");
+    }).catch(e => {
+      updateChrome(); render(); setSync("error");
+      toast("Falha ao salvar: " + e.message);
+    });
+  };
+  const step = i => {
+    if (i >= locals.length) return finish();
+    const lp = locals[i];
+    if (merged.projects.length >= MAX_PROJECTS) {
+      return projectLimitDialog(lp.title,
+        () => step(i + 1),
+        () => toast("Sincronização cancelada"));
+    }
+    if (slugs.has(slugify(lp.title))) {
+      conflictDialog(lp.title,
+        () => { lp.id = uid(lp.title); merged.projects.push(lp); slugs.add(slugify(lp.title)); step(i + 1); },
+        () => step(i + 1));
+    } else { merged.projects.push(lp); slugs.add(slugify(lp.title)); step(i + 1); }
+  };
+  step(0);
+}
+
+// Banner sintético dentro de um projeto quando deslogado
+function guestBanner() {
+  if (api.isLoggedIn()) return "";
+  return `<div class="guest-banner">Você está deslogado. Entre para acessar este projeto em outros dispositivos. <button class="linkbtn" data-guest-login>Entrar</button></div>`;
 }
 
 /* ---------- Boot ---------- */
-document.getElementById("btn-new").addEventListener("click", openNewProjectModal);
-document.getElementById("btn-export").addEventListener("click", exportJSON);
-document.getElementById("btn-import").addEventListener("click", importJSON);
-document.getElementById("btn-reset").addEventListener("click", reloadFromServer);
+function boot() {
+  const local = readLocalDb();
+  const hasLocal = (local.projects || []).length > 0;
+  const sess = api.session();
+  if (api.isLoggedIn() && sess) {
+    if (localStorage.getItem(LS_OWNER) === sess.username) return enterApp(); // sincronizado → nuvem
+    if (hasLocal) return adoptGuestLoggedIn(local);                          // logado com local não sinc.
+    return enterApp();                                                       // sem local → nuvem
+  }
+  enterGuest();                                                             // convidado (com ou sem projeto) → app + box
+}
 document.getElementById("brand").addEventListener("click", goHome);
-document.getElementById("btn-logout").addEventListener("click", () => {
-  api.logout(); db = { version: 2, projects: [] }; renderAuth("login");
-});
-if (api.isLoggedIn()) enterApp(); else renderAuth("login");
+boot();
