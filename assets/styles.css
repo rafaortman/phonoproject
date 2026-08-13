@@ -39,6 +39,7 @@ button {
 }
 
 /* ---------- Layout ---------- */
+.topbar[hidden] { display: none; }
 .topbar {
   display: flex;
   align-items: center;
@@ -1672,3 +1673,25 @@ table.pipeline .track-title input:focus {
 .modal {
   max-width: 520px;
 }
+
+/* ---------- Autenticação (login / criar conta) ---------- */
+.who { color: var(--text-dim); font-size: 13px; margin-right: 6px; }
+.auth { min-height: 70vh; display: grid; place-items: center; padding: 24px 0; }
+.auth-card {
+  width: 100%; max-width: 360px; background: var(--bg-elev); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 28px 26px; box-shadow: var(--shadow);
+}
+.auth-logo { color: var(--accent); display: flex; justify-content: center; margin-bottom: 6px; }
+.auth-card h2 { text-align: center; margin: 0 0 18px; font-size: 22px; letter-spacing: -0.01em; }
+.auth-card .field { margin-bottom: 12px; }
+.auth-card label { display: block; font-size: 12px; color: var(--text-faint); margin-bottom: 5px; }
+.auth-card input {
+  width: 100%; background: var(--bg); border: 1px solid var(--border); color: var(--text);
+  font: inherit; font-size: 14px; padding: 9px 11px; border-radius: 8px;
+}
+.auth-card input:focus { border-color: var(--accent); outline: none; }
+.auth-msg { min-height: 18px; color: var(--danger); font-size: 12.5px; margin: 4px 0 10px; }
+.auth-go { width: 100%; justify-content: center; padding: 10px; font-size: 14px; }
+.auth-alt { text-align: center; color: var(--text-faint); font-size: 13px; margin-top: 16px; }
+.auth-loading { text-align: center; color: var(--text-dim); }
+.linkbtn { background: none; border: none; color: var(--accent); cursor: pointer; font: inherit; font-size: 13px; padding: 0; text-decoration: underline; }

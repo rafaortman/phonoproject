@@ -76,17 +76,17 @@ function migrate() {
     delete p.stages; // projeto não é mais dono das etapas
   });
 }
-async function loadData() {
-  const saved = localStorage.getItem(LS_KEY);
-  if (saved) { try { db = JSON.parse(saved); migrate(); return; } catch (e) {} }
-  try {
-    const res = await fetch("data/projects.json", { cache: "no-store" });
-    db = await res.json();
-  } catch (e) { db = { version: 2, projects: [] }; }
-  migrate();
-  save();
+// Salva no cache local sempre; e no servidor com debounce (~1,5s) se logado.
+let saveTimer = null;
+function save() {
+  localStorage.setItem(LS_KEY, JSON.stringify(db));
+  if (!api.isLoggedIn()) return;
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => {
+    api.save(db).catch(e => toast("Falha ao salvar no servidor: " + e.message));
+  }, 1500);
 }
-function save() { localStorage.setItem(LS_KEY, JSON.stringify(db)); }
+function ensureDb(data) { return (data && Array.isArray(data.projects)) ? data : { version: 2, projects: [] }; }
 
 /* ---------- Images (client-side downscale → data URI) ---------- */
 function downscaleImage(file, maxDim, quality) {
@@ -1063,15 +1063,18 @@ function importJSON() {
     const f = inp.files[0]; if (!f) return; const r = new FileReader();
     r.onload = () => { try { const parsed = JSON.parse(r.result);
       if (!parsed || !Array.isArray(parsed.projects)) throw new Error("formato inválido");
-      db = parsed; save(); goHome(); toast("Dados importados"); }
+      db = parsed; migrate(); save(); goHome(); toast("Dados importados — salvando na sua conta…"); }
       catch (e) { toast("Arquivo inválido: " + e.message); } };
     r.readAsText(f);
   });
   inp.click();
 }
-function resetToSeed() {
-  confirmDialog("Descartar edições locais e recarregar os dados do repositório?", () => {
-    localStorage.removeItem(LS_KEY); loadData().then(() => { goHome(); toast("Dados recarregados do repositório"); });
+function reloadFromServer() {
+  confirmDialog("Descartar edições locais e recarregar do servidor?", () => {
+    api.load().then(data => {
+      db = ensureDb(data); migrate(); localStorage.setItem(LS_KEY, JSON.stringify(db));
+      goHome(); toast("Recarregado do servidor");
+    }).catch(e => toast(e.message));
   }, { danger: true, okLabel: "Descartar" });
 }
 
@@ -1084,10 +1087,67 @@ function toast(msg) {
   clearTimeout(toastTimer); toastTimer = setTimeout(() => el.classList.remove("show"), 2600);
 }
 
+/* ---------- Autenticação ---------- */
+function setChrome(on) {
+  document.getElementById("topbar").hidden = !on;
+  if (on) { const s = api.session(); document.getElementById("who").textContent = s ? (s.name || s.username || "") : ""; }
+}
+function afterAuth(data) {
+  db = ensureDb(data); migrate();
+  localStorage.setItem(LS_KEY, JSON.stringify(db));
+  setChrome(true);
+  route = { view: "home" }; history.replaceState(route, ""); render();
+}
+async function enterApp() {
+  app.innerHTML = `<div class="auth"><div class="auth-card"><p class="auth-loading">Carregando…</p></div></div>`;
+  try { afterAuth(await api.load()); }
+  catch (e) { api.clearSession(); toast(e.message || "Sessão expirada"); renderAuth("login"); }
+}
+function renderAuth(mode) {
+  setChrome(false);
+  const isLogin = mode !== "signup";
+  app.innerHTML = `
+    <div class="auth">
+      <div class="auth-card">
+        <div class="auth-logo"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960" fill="currentColor" width="40" height="40"><path d="M480-316q70 0 120-47.5T650-480q0-71-49.5-120.5T480-650q-69 0-116.5 50T316-480q0 69 47.5 116.5T480-316Zm0-104q-25 0-42.5-17.5T420-480q0-25 17.5-42.5T480-540q25 0 42.5 17.5T540-480q0 25-17.5 42.5T480-420Zm0 340q-83 0-156-31.5T197-197q-54-54-85.5-127T80-480q0-83 31.5-156T197-763q54-54 127-85.5T480-880q83 0 156 31.5T763-763q54 54 85.5 127T880-480q0 83-31.5 156T763-197q-54 54-127 85.5T480-80Z"/></svg></div>
+        <h2>${isLogin ? "Entrar" : "Criar conta"}</h2>
+        ${isLogin ? "" : `<div class="field"><label>Nome</label><input id="au-name" autocomplete="name"></div>`}
+        <div class="field"><label>Usuário</label><input id="au-user" autocomplete="username"></div>
+        <div class="field"><label>Senha</label><input id="au-pass" type="password" autocomplete="${isLogin ? "current-password" : "new-password"}"></div>
+        ${isLogin ? "" : `<div class="field"><label>Cupom</label><input id="au-coupon" autocomplete="off"></div>`}
+        <div class="auth-msg" id="au-msg"></div>
+        <button class="btn primary auth-go" id="au-go">${isLogin ? "Entrar" : "Criar conta"}</button>
+        <div class="auth-alt">${isLogin
+          ? `Não tem conta? <button class="linkbtn" data-auth="signup">Criar conta</button>`
+          : `Já tem conta? <button class="linkbtn" data-auth="login">Entrar</button>`}</div>
+      </div>
+    </div>`;
+
+  const msg = t => { document.getElementById("au-msg").textContent = t || ""; };
+  const go = document.getElementById("au-go");
+  const submit = () => {
+    const user = document.getElementById("au-user").value.trim();
+    const pass = document.getElementById("au-pass").value;
+    if (!user || !pass) return msg("Preencha usuário e senha.");
+    go.disabled = true; msg(isLogin ? "Entrando…" : "Criando conta…");
+    const p = isLogin
+      ? api.login(user, pass)
+      : api.createAccount(document.getElementById("au-name").value.trim(), user, pass, document.getElementById("au-coupon").value.trim());
+    p.then(r => afterAuth(r.data)).catch(e => { go.disabled = false; msg(e.message); });
+  };
+  go.addEventListener("click", submit);
+  app.querySelectorAll("[data-auth]").forEach(b => b.addEventListener("click", () => renderAuth(b.dataset.auth)));
+  app.querySelectorAll(".auth-card input").forEach(inp => inp.addEventListener("keydown", e => { if (e.key === "Enter") submit(); }));
+  const first = app.querySelector(".auth-card input"); if (first) first.focus();
+}
+
 /* ---------- Boot ---------- */
 document.getElementById("btn-new").addEventListener("click", openNewProjectModal);
 document.getElementById("btn-export").addEventListener("click", exportJSON);
 document.getElementById("btn-import").addEventListener("click", importJSON);
-document.getElementById("btn-reset").addEventListener("click", resetToSeed);
+document.getElementById("btn-reset").addEventListener("click", reloadFromServer);
 document.getElementById("brand").addEventListener("click", goHome);
-loadData().then(() => { history.replaceState(route, ""); render(); });
+document.getElementById("btn-logout").addEventListener("click", () => {
+  api.logout(); db = { version: 2, projects: [] }; renderAuth("login");
+});
+if (api.isLoggedIn()) enterApp(); else renderAuth("login");

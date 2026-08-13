@@ -1,11 +1,6 @@
 {
   "version": "0.0.1",
   "configurations": [
-    {
-      "name": "dashboard",
-      "runtimeExecutable": "python",
-      "runtimeArgs": ["-m", "http.server", "4173"],
-      "port": 4173
-    }
+    { "name": "controle", "runtimeExecutable": "python", "runtimeArgs": ["-m", "http.server", "5599"], "port": 5599 }
   ]
 }
