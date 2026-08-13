@@ -205,6 +205,26 @@ button {
   gap: 18px;
 }
 
+.new-project-card {
+  min-height: 150px;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-elev-2);
+  color: var(--text-faint);
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  font: inherit;
+  font-weight: 600;
+  transition: border-color .15s, color .15s, transform .1s;
+}
+
+.new-project-card:hover {
+  border-color: var(--accent);
+  color: var(--text-dim);
+  transform: translateY(-2px);
+}
+
 .card {
   position: relative;
   background: var(--bg-elev);
@@ -1710,4 +1730,24 @@ table.pipeline .track-title input:focus {
 .guest-banner {
   background: #f5b54414; border: 1px solid #f5b54433; color: var(--text-dim);
   border-radius: 8px; padding: 9px 14px; font-size: 13px; margin-bottom: 16px;
+}
+
+.section-accordion-head {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 0 8px;
+  border: 0;
+  background: none;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.section-accordion-head .ic { width: 20px; height: 20px; }
+.section-accordion.collapsed .section-accordion-body { display: none; }
+
+.lyrics-chord {
+  font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
 }

@@ -1,5 +1,5 @@
 {
-  "version": 2,
+  "version": 3,
   "projects": [
     {
       "id": "blague-ii",
@@ -33,7 +33,7 @@
           "type": "inedita",
           "composers": ["rafa", "olivia"],
           "style": "",
-          "bpm": null, "key": "", "duration": "", "references": "",
+          "bpm": null, "key": "", "duration": "", "lyricsChord": "", "producers": [],
           "notes": "Primeira faixa fechada de ponta a ponta na produção.",
           "instruments": [
             { "id": "i1", "name": "Voz", "personId": "olivia", "used": true },
@@ -59,7 +59,7 @@
           "type": "inedita",
           "composers": ["rafa", "olivia"],
           "style": "",
-          "bpm": null, "key": "", "duration": "", "references": "",
+          "bpm": null, "key": "", "duration": "", "lyricsChord": "", "producers": [],
           "notes": "Verificar se o arranjo está fechado.",
           "instruments": [
             { "id": "i1", "name": "Voz principal", "personId": "olivia", "used": true },
@@ -85,7 +85,7 @@
           "type": "inedita",
           "composers": ["rafa", "olivia"],
           "style": "",
-          "bpm": null, "key": "", "duration": "", "references": "",
+          "bpm": null, "key": "", "duration": "", "lyricsChord": "", "producers": [],
           "notes": "Olivia precisa cantar. Avaliar solo de guitarra do Melão.",
           "instruments": [
             { "id": "i1", "name": "Vozes", "personId": "rafa", "used": true },
@@ -112,7 +112,7 @@
           "type": "inedita",
           "composers": ["rafa", "olivia"],
           "style": "",
-          "bpm": null, "key": "", "duration": "", "references": "",
+          "bpm": null, "key": "", "duration": "", "lyricsChord": "", "producers": [],
           "notes": "Avaliar violão nylon base, quais guitarras base aproveitar e backing vocal.",
           "instruments": [
             { "id": "i1", "name": "Guitarras base", "personId": "rafa", "used": true },
@@ -137,7 +137,7 @@
           "type": "inedita",
           "composers": ["rafa", "olivia"],
           "style": "",
-          "bpm": null, "key": "", "duration": "", "references": "",
+          "bpm": null, "key": "", "duration": "", "lyricsChord": "", "producers": [],
           "notes": "Avaliar regravar loops com percussão analógica (Sacha ou Marcito). Avaliar subir 3 semitons para Olivia cantar.",
           "instruments": [
             { "id": "i1", "name": "Voz", "personId": "rafa", "used": true },
@@ -161,7 +161,7 @@
           "type": "inedita",
           "composers": ["rafa", "olivia"],
           "style": "",
-          "bpm": null, "key": "", "duration": "", "references": "",
+          "bpm": null, "key": "", "duration": "", "lyricsChord": "", "producers": [],
           "notes": "Gravar baixo. Avaliar regravar violão adaptado ao arranjo multi-instrumental.",
           "instruments": [
             { "id": "i1", "name": "Violão", "personId": "rafa", "used": true },
@@ -185,7 +185,7 @@
           "type": "inedita",
           "composers": ["rafa", "olivia"],
           "style": "",
-          "bpm": null, "key": "", "duration": "", "references": "",
+          "bpm": null, "key": "", "duration": "", "lyricsChord": "", "producers": [],
           "notes": "Avaliar chamar Bruno para bateria.",
           "instruments": [
             { "id": "i1", "name": "Voz", "personId": "olivia", "used": true },
@@ -207,7 +207,7 @@
           "type": "inedita",
           "composers": ["rafa", "olivia"],
           "style": "",
-          "bpm": null, "key": "", "duration": "", "references": "",
+          "bpm": null, "key": "", "duration": "", "lyricsChord": "", "producers": [],
           "notes": "Avaliar chamar Bruno para bateria.",
           "instruments": [
             { "id": "i1", "name": "Voz", "personId": "olivia", "used": true },
@@ -229,7 +229,7 @@
           "type": "inedita",
           "composers": ["rafa", "olivia"],
           "style": "",
-          "bpm": null, "key": "", "duration": "", "references": "",
+          "bpm": null, "key": "", "duration": "", "lyricsChord": "", "producers": [],
           "notes": "Falta finalizar a música; o final ainda não está definido. Avaliar chamar Bruno para bateria.",
           "instruments": [
             { "id": "i1", "name": "Voz", "personId": "olivia", "used": true },

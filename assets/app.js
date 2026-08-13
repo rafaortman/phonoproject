@@ -64,18 +64,27 @@ let route = { view: "home", projectId: null, trackId: null };
 let cortinaEl = null, cortinaCleanup = null;
 const collapsedStages = new Set(); // etapas recolhidas (accordion) — estado de UI, não persistido
 const expandedPeople = new Set();  // músicos expandidos; começam TODOS recolhidos
+let tracksSectionOpen = true;
+let peopleSectionOpen = false;
+const MAX_PROJECTS = 3;
 
 /* ---------- Persistence ---------- */
 // Etapas passaram a ser da faixa: cada faixa herda uma cópia própria das etapas
 // que eram do projeto (preserva stageState, que já vivia na faixa).
 function migrate() {
+  let changed = db.version !== 3;
   (db.projects || []).forEach(p => {
     (p.tracks || []).forEach(t => {
-      if (!Array.isArray(t.stages)) t.stages = p.stages ? JSON.parse(JSON.stringify(p.stages)) : [];
-      t.stageState = t.stageState || {};
+      if (!Array.isArray(t.stages)) { t.stages = p.stages ? JSON.parse(JSON.stringify(p.stages)) : []; changed = true; }
+      if (!t.stageState) { t.stageState = {}; changed = true; }
+      if (!Array.isArray(t.producers)) { t.producers = []; changed = true; }
+      if (typeof t.lyricsChord !== "string") { t.lyricsChord = ""; changed = true; }
+      if (Object.prototype.hasOwnProperty.call(t, "references")) { delete t.references; changed = true; }
     });
-    delete p.stages; // projeto não é mais dono das etapas
+    if (Object.prototype.hasOwnProperty.call(p, "stages")) { delete p.stages; changed = true; }
   });
+  db.version = 3;
+  return changed;
 }
 // Salva no cache local sempre; no servidor (debounce ~1,5s) só se logado E sincronizado.
 let saveTimer = null;
@@ -176,6 +185,7 @@ function personRefs(p, id) {
   let n = 0;
   (p.tracks || []).forEach(t => {
     if ((t.composers || []).includes(id)) n++;
+    if ((t.producers || []).includes(id)) n++;
     (t.instruments || []).forEach(i => { if (i.personId === id) n++; });
   });
   return n;
@@ -183,6 +193,7 @@ function personRefs(p, id) {
 function doRemovePerson(p, id) {
   p.tracks.forEach(t => {
     t.composers = (t.composers || []).filter(c => c !== id);
+    t.producers = (t.producers || []).filter(x => x !== id);
     (t.instruments || []).forEach(i => { if (i.personId === id) i.personId = null; });
   });
   p.people = (p.people || []).filter(x => x.id !== id);
@@ -295,7 +306,12 @@ function navTo(r) {
   window.scrollTo(0, 0);
 }
 function goHome() { navTo({ view: "home" }); }
-function goProject(id) { navTo({ view: "project", projectId: id }); }
+function goProject(id) {
+  tracksSectionOpen = true;
+  peopleSectionOpen = false;
+  expandedPeople.clear();
+  navTo({ view: "project", projectId: id });
+}
 function goTrack(pid, tid) { navTo({ view: "track", projectId: pid, trackId: tid }); }
 window.addEventListener("popstate", e => {
   route = e.state || { view: "home" };
@@ -312,6 +328,9 @@ function progressBar(bar) {
 
 /* ----- Home ----- */
 function renderHome() {
+  const newCard = db.projects.length < MAX_PROJECTS
+    ? `<button class="new-project-card" data-action="new"><span>Novo projeto</span></button>`
+    : "";
   const cards = db.projects.map(p => {
     const cls = classify(p.tracks.length);
     return `<div class="card ${p.cover ? "" : "no-cover"}" data-open="${p.id}">
@@ -333,10 +352,7 @@ function renderHome() {
     ${contextBox()}
     <div class="section-head"><h2>Meus projetos</h2>
       <span class="count">${db.projects.length} projeto${db.projects.length === 1 ? "" : "s"}</span></div>
-    ${db.projects.length ? `<div class="grid">${cards}</div>` : `
-      <div class="empty"><h3>Nenhum projeto ainda</h3>
-        <p>Crie seu primeiro projeto fonográfico para começar.</p>
-        <button class="btn primary" data-action="new">+ Novo projeto</button></div>`}`;
+    <div class="grid">${newCard}${cards}</div>`;
 
   wireContextBox();
   app.querySelectorAll("[data-open]").forEach(el => el.addEventListener("click", () => goProject(el.dataset.open)));
@@ -391,11 +407,12 @@ function renderProject(p) {
         : `<div class="faint">Sem faixas ainda.</div>`}
     </div>
 
-    <div class="field proj-notes"><label>Observações gerais do projeto</label>
+    <div class="field proj-notes"><label>Observações do projeto</label>
       <textarea class="stage-note" data-proj-notes placeholder="Notas, decisões e pendências do projeto…">${esc(p.notes || "")}</textarea></div>
 
-    <div class="elenco">
-      <div class="elenco-head">Músicos <span class="count">${(p.people || []).length}</span></div>
+    <div class="elenco section-accordion${peopleSectionOpen ? "" : " collapsed"}">
+      <button class="elenco-head section-accordion-head" data-section="people">${icon("chevron", peopleSectionOpen ? "" : "rot-right")}<span>Músicos <span class="count">${(p.people || []).length}</span></span></button>
+      <div class="section-accordion-body">
       <div class="people-list">
         ${(p.people || []).map((x, i, arr) => `
           <div class="np-person${expandedPeople.has(x.id) ? "" : " collapsed"}" data-person="${x.id}">
@@ -422,13 +439,24 @@ function renderProject(p) {
           </div>`).join("")}
       </div>
       <div class="add-person-row with-btn"><input class="chip-input" data-add-person placeholder="Nome do músico" autocomplete="off"><button type="button" class="row-add" data-add-person-btn title="Adicionar músico">${icon("plus")}</button></div>
+      </div>
     </div>
 
-    ${p.tracks.length ? `<div class="track-list">${rows}</div>` :
-      `<div class="empty"><h3>Sem faixas</h3><p>Adicione a primeira faixa deste projeto.</p></div>`}
-    <div class="add-track-bar"><button class="btn primary" data-add-track>+ Adicionar faixa</button></div>`;
+    <div class="elenco section-accordion${tracksSectionOpen ? "" : " collapsed"}">
+      <button class="elenco-head section-accordion-head" data-section="tracks">${icon("chevron", tracksSectionOpen ? "" : "rot-right")}<span>Faixas <span class="count">${p.tracks.length}</span></span></button>
+      <div class="section-accordion-body">
+        ${p.tracks.length ? `<div class="track-list">${rows}</div>` :
+          `<div class="empty"><h3>Sem faixas</h3><p>Adicione a primeira faixa deste projeto.</p></div>`}
+        <div class="add-track-bar"><button class="btn primary" data-add-track>+ Adicionar faixa</button></div>
+      </div>
+    </div>`;
 
   app.querySelector("[data-home]").addEventListener("click", goHome);
+  app.querySelectorAll("[data-section]").forEach(btn => btn.addEventListener("click", () => {
+    if (btn.dataset.section === "people") peopleSectionOpen = !peopleSectionOpen;
+    else tracksSectionOpen = !tracksSectionOpen;
+    render();
+  }));
   const gl = app.querySelector("[data-guest-login]"); if (gl) gl.addEventListener("click", () => openAuthModal("login"));
   app.querySelectorAll("[data-track]").forEach(el => el.addEventListener("click", () => goTrack(p.id, el.dataset.track)));
   app.querySelector("[data-add-track]").addEventListener("click", () => openTrackModal(p));
@@ -573,7 +601,6 @@ function projectNominal(p) {
 
 /* ----- Track detail ----- */
 function renderTrack(p, t) {
-  const allCollapsed = (t.stages || []).length > 0 && t.stages.every(s => collapsedStages.has(s.id));
   const idx = p.tracks.indexOf(t);
   const prev = p.tracks[idx - 1], next = p.tracks[idx + 1];
 
@@ -595,7 +622,6 @@ function renderTrack(p, t) {
       : `<div class="instr-empty">Nenhuma etapa ainda. Crie a primeira abaixo.</div>`}</div>
     <div class="add-stage-bar">
       <button class="btn ghost small icon-btn" data-add-stage>${icon("plus")} etapa</button>
-      ${(t.stages || []).length > 1 ? `<button class="btn ghost small" data-toggle-all>${allCollapsed ? "Expandir todas" : "Recolher todas"}</button>` : ""}
     </div>
 
     <div class="track-nav">
@@ -605,7 +631,6 @@ function renderTrack(p, t) {
     </div>
 
     <div class="track-foot">
-      <button class="btn primary" data-done>✓ Concluir</button>
       <button class="btn ghost icon-btn" data-new-track>${icon("plus")} Nova faixa</button>
     </div>
 
@@ -713,6 +738,8 @@ function attachCortina(input, opts) {
 function renderFicha(p, t) {
   const compChips = (t.composers || []).map(id =>
     `<span class="chip">${esc(personName(p, id))}<button data-rm-comp="${id}" title="Remover">×</button></span>`).join("");
+  const producerChips = (t.producers || []).map(id =>
+    `<span class="chip">${esc(personName(p, id))}<button data-rm-producer="${id}" title="Remover">×</button></span>`).join("");
   return `<div class="ficha">
     <div class="field"><label>Compositores</label>
       <div class="chips">${compChips}<input class="chip-input" data-add-comp list="people-list" placeholder="Nome" autocomplete="off"><button type="button" class="row-add" data-add-comp-btn title="Adicionar compositor">${icon("plus")}</button></div>
@@ -723,9 +750,12 @@ function renderFicha(p, t) {
       <div class="field"><label>Tom</label><input data-f="key" value="${esc(t.key)}" placeholder="Ex.: Am"></div>
       <div class="field"><label>Duração</label><input data-f="duration" value="${esc(t.duration)}" placeholder="Ex.: 3:42"></div>
     </div>
-    <div class="field"><label>Referências</label>
-      <textarea data-f="references" placeholder="Faixas de referência, links, o que buscar…">${esc(t.references)}</textarea></div>
-    <div class="field"><label>Observações gerais</label>
+    <div class="field"><label>Produtor fonográfico</label>
+      <div class="chips">${producerChips}<input class="chip-input" data-add-producer list="people-list" placeholder="Nome" autocomplete="off"><button type="button" class="row-add" data-add-producer-btn title="Adicionar produtor fonográfico">${icon("plus")}</button></div>
+    </div>
+    <div class="field"><label>Letra/cifra</label>
+      <textarea class="lyrics-chord" data-f="lyricsChord" placeholder="Letra e cifra…">${esc(t.lyricsChord || "")}</textarea></div>
+    <div class="field"><label>Observações</label>
       <textarea data-f="notes" placeholder="Pendências e decisões da faixa…">${esc(t.notes)}</textarea></div>
   </div>`;
 }
@@ -836,6 +866,20 @@ function wireTrack(p, t) {
   const addCompBtn = app.querySelector("[data-add-comp-btn]");
   if (addCompBtn) addCompBtn.addEventListener("click", doAddComp);
 
+  // produtores fonográficos (vários; nomes novos entram nos músicos do projeto)
+  app.querySelectorAll("[data-rm-producer]").forEach(b => b.addEventListener("click", () => {
+    t.producers = (t.producers || []).filter(id => id !== b.dataset.rmProducer); save(); rt();
+  }));
+  const addProducer = app.querySelector("[data-add-producer]");
+  const doAddProducer = () => {
+    const id = ensurePerson(p, addProducer.value);
+    if (id) { t.producers = t.producers || []; if (!t.producers.includes(id)) t.producers.push(id); }
+    save(); rt();
+  };
+  if (addProducer) addProducer.addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); doAddProducer(); } });
+  const addProducerBtn = app.querySelector("[data-add-producer-btn]");
+  if (addProducerBtn) addProducerBtn.addEventListener("click", doAddProducer);
+
   app.querySelector("[data-del-track]").addEventListener("click", () => {
     confirmDialog(`Excluir a faixa "${t.title || "sem título"}"?`,
       () => { p.tracks = p.tracks.filter(x => x.id !== t.id); save(); goProject(p.id); toast("Faixa removida"); },
@@ -843,13 +887,6 @@ function wireTrack(p, t) {
   });
 
   app.querySelector("[data-add-stage]").addEventListener("click", () => { t.stages.push(suggestNextStage(t)); save(); rt(); });
-  const toggleAll = app.querySelector("[data-toggle-all]");
-  if (toggleAll) toggleAll.addEventListener("click", () => {
-    const all = t.stages.every(s => collapsedStages.has(s.id));
-    t.stages.forEach(s => all ? collapsedStages.delete(s.id) : collapsedStages.add(s.id));
-    rt();
-  });
-  app.querySelector("[data-done]").addEventListener("click", () => goProject(p.id));
   app.querySelector("[data-new-track]").addEventListener("click", () => openTrackModal(p));
   const idx = p.tracks.indexOf(t);
   const prevBtn = app.querySelector("[data-track-prev]"), nextBtn = app.querySelector("[data-track-next]");
@@ -1011,6 +1048,7 @@ function confirmDialog(message, onConfirm, opts = {}) {
 }
 
 function openNewProjectModal() {
+  if ((db.projects || []).length >= MAX_PROJECTS) return;
   const { b, close } = modal(`
     <h3>Novo projeto fonográfico</h3>
     <div class="field"><label>Título do projeto</label><input id="np-title" placeholder="Ex.: Blague II" autocomplete="off"></div>
@@ -1066,7 +1104,7 @@ function openTrackModal(p) {
     const tt = title.value.trim(); if (!tt) return title.focus();
     const track = { id: uid(tt), title: tt,
       composers: composers.slice(), style: b.querySelector("#tk-style").value.trim(),
-      bpm: null, key: "", duration: "", references: "", notes: "", instruments: [], stages: [], stageState: {} };
+      bpm: null, key: "", duration: "", lyricsChord: "", notes: "", producers: [], instruments: [], stages: [], stageState: {} };
     p.tracks.push(track); save(); close(); goTrack(p.id, track.id); toast("Faixa criada");
   };
   b.querySelector("[data-ok]").addEventListener("click", create);
@@ -1085,6 +1123,7 @@ function importJSON() {
     const f = inp.files[0]; if (!f) return; const r = new FileReader();
     r.onload = () => { try { const parsed = JSON.parse(r.result);
       if (!parsed || !Array.isArray(parsed.projects)) throw new Error("formato inválido");
+      if (parsed.projects.length > MAX_PROJECTS) throw new Error("limite de 3 projetos");
       db = parsed; migrate(); save(); goHome(); toast("Dados importados — salvando na sua conta…"); }
       catch (e) { toast("Arquivo inválido: " + e.message); } };
     r.readAsText(f);
@@ -1113,7 +1152,7 @@ function toast(msg) {
 const DISC_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960" fill="currentColor" width="42" height="42"><path d="M480-316q70 0 120-47.5T650-480q0-71-49.5-120.5T480-650q-69 0-116.5 50T316-480q0 69 47.5 116.5T480-316Zm0-104q-25 0-42.5-17.5T420-480q0-25 17.5-42.5T480-540q25 0 42.5 17.5T540-480q0 25-17.5 42.5T480-420Zm0 340q-83 0-156-31.5T197-197q-54-54-85.5-127T80-480q0-83 31.5-156T197-763q54-54 127-85.5T480-880q83 0 156 31.5T763-763q54 54 85.5 127T880-480q0 83-31.5 156T763-197q-54 54-127 85.5T480-80Z"/></svg>`;
 let pendingLocal = null, pendingCloud = null;
 
-// Preenche a topbar: convidado (Entrar/Criar conta) · logado (nome + sync + Sair) · não-sinc (nome + chip + Sair)
+// Preenche a topbar: convidado (Entrar) · logado (nome + sync + Sair) · não-sinc (nome + chip + Sair)
 function updateChrome() {
   const slot = document.getElementById("authslot");
   const sess = api.session();
@@ -1122,7 +1161,7 @@ function updateChrome() {
   } else if (api.isLoggedIn() && sess) {
     slot.innerHTML = `<span class="who">${esc(sess.name || sess.username)}</span><span class="chip-local">não sincronizado</span><button class="btn ghost small" data-act="logout">Sair</button>`;
   } else {
-    slot.innerHTML = `<button class="btn ghost small" data-act="login">Entrar</button><button class="btn ghost small" data-act="signup">Criar conta</button>`;
+    slot.innerHTML = `<button class="btn ghost small" data-act="login">Entrar</button>`;
   }
   slot.querySelectorAll("[data-act]").forEach(b => b.addEventListener("click", () => {
     const a = b.dataset.act;
@@ -1133,10 +1172,15 @@ function updateChrome() {
 }
 
 function enterAppShell() { updateChrome(); route = { view: "home" }; history.replaceState(route, ""); render(); }
-function enterGuest() { db = readLocalDb(); migrate(); enterAppShell(); }
+function enterGuest() {
+  db = readLocalDb();
+  if (migrate()) localStorage.setItem(LS_KEY, JSON.stringify(db));
+  enterAppShell();
+}
 function adoptCloud(data) {
-  db = ensureDb(data); migrate(); setOwner(); localStorage.setItem(LS_KEY, JSON.stringify(db));
+  db = ensureDb(data); const migrated = migrate(); setOwner(); localStorage.setItem(LS_KEY, JSON.stringify(db));
   enterAppShell(); setSync("saved");
+  if (migrated) api.save(db).catch(e => { setSync("error"); toast("Falha ao migrar dados: " + e.message); });
 }
 function adoptGuestLoggedIn(local) {
   db = ensureDb(local); migrate(); clearOwner(); localStorage.setItem(LS_KEY, JSON.stringify(db));
@@ -1166,14 +1210,13 @@ function contextBox() {
   }
   if ((db.projects || []).length) {
     return `<div class="ctx-box">
-      <div class="ctx-text"><b>Modo local</b><p>Seus projetos ficam salvos só neste dispositivo. Crie uma conta para guardá-los na nuvem e acessar de qualquer lugar.</p></div>
-      <div class="ctx-actions"><button class="btn primary" data-ctx="signup">Criar conta</button><button class="btn ghost" data-ctx="login">Entrar</button><button class="linkbtn" data-ctx="info">Como funciona?</button></div>
+      <div class="ctx-text"><b>Modo local</b><p>Seus projetos ficam salvos só neste dispositivo. Crie uma conta para guardá-los na nuvem e acessar de qualquer lugar. <button class="linkbtn" data-ctx="info">Entenda como funciona</button>.</p></div>
+      <div class="ctx-actions"><button class="btn ghost" data-ctx="login">Entrar</button></div>
     </div>`;
   }
   return `<div class="ctx-box welcome-box">
-    <div class="auth-logo">${DISC_SVG}</div>
-    <div class="ctx-text"><b>Bem-vindo</b><p>Organize a produção dos seus projetos musicais — faixas, pessoas, instrumentos e etapas de produção. Comece agora, sem conta (salvo neste dispositivo). Para acessar de outros dispositivos ou manter na nuvem, crie uma conta.</p></div>
-    <div class="ctx-actions"><button class="btn primary" data-ctx="new">Criar projeto</button><button class="btn ghost" data-ctx="login">Entrar</button><button class="btn ghost" data-ctx="signup">Criar conta</button></div>
+    <div class="ctx-text"><b>Bem-vindo</b><p>Organize a produção dos seus projetos musicais — faixas, pessoas, instrumentos e etapas de produção. Seus projetos ficam salvos só neste dispositivo. <button class="linkbtn" data-ctx="info">Entenda como funciona</button>.</p></div>
+    <div class="ctx-actions"><button class="btn primary" data-ctx="new">Criar projeto</button><button class="btn ghost" data-ctx="login">Entrar</button></div>
   </div>`;
 }
 function wireContextBox() {
@@ -1274,7 +1317,7 @@ function syncLocalToAccount() {
 // Banner sintético dentro de um projeto quando deslogado
 function guestBanner() {
   if (api.isLoggedIn()) return "";
-  return `<div class="guest-banner">Você está deslogado. Entre ou crie uma conta para acessar este projeto em outros dispositivos. <button class="linkbtn" data-guest-login>Entrar</button></div>`;
+  return `<div class="guest-banner">Você está deslogado. Entre para acessar este projeto em outros dispositivos. <button class="linkbtn" data-guest-login>Entrar</button></div>`;
 }
 
 /* ---------- Boot ---------- */
@@ -1289,6 +1332,5 @@ function boot() {
   }
   enterGuest();                                                             // convidado (com ou sem projeto) → app + box
 }
-document.getElementById("btn-new").addEventListener("click", openNewProjectModal);
 document.getElementById("brand").addEventListener("click", goHome);
 boot();
