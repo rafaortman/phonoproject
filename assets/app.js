@@ -39,6 +39,7 @@ const ICONS = {
   close:'<path d="M18.7,32.88l-1.58-1.58,6.3-6.3-6.3-6.3,1.58-1.58,6.3,6.3,6.3-6.3,1.58,1.58-6.3,6.3,6.3,6.3-1.58,1.58-6.3-6.3-6.3,6.3Z"/>',
   down:'<path d="M23.87,16v13.7l-6.3-6.3-1.58,1.6,9,9,9-9-1.58-1.6-6.3,6.3v-13.7h-2.25Z"/>',
   left:'<path d="M34,23.87h-13.7l6.3-6.3-1.6-1.58-9,9,9,9,1.6-1.58-6.3-6.3h13.7v-2.25Z"/>',
+  right:'<g transform="translate(50 0) scale(-1 1)"><path d="M34,23.87h-13.7l6.3-6.3-1.6-1.58-9,9,9,9,1.6-1.58-6.3-6.3h13.7v-2.25Z"/></g>',
   edit:'<path d="M17.12,32.88h1.6l11-11-1.6-1.6-11,11v1.6ZM14.87,35.13v-4.78l14.86-14.83c.23-.21.47-.37.75-.48s.56-.17.86-.17.59.06.87.17.53.28.73.51l1.55,1.58c.23.21.39.45.49.73s.15.56.15.84c0,.3-.05.59-.15.86s-.27.52-.49.75l-14.83,14.83h-4.78Z"/>',
   pause:'<rect x="20.04" y="18.35" width="2.23" height="13.3"/><rect x="27.73" y="18.35" width="2.23" height="13.3"/>',
   plus:'<path d="M23.87,26.13h-6.75v-2.25h6.75v-6.75h2.25v6.75h6.75v2.25h-6.75v6.75h-2.25v-6.75Z"/>',
@@ -61,6 +62,7 @@ let db = { version: 2, projects: [] };
 let route = { view: "home", projectId: null, trackId: null };
 let cortinaEl = null, cortinaCleanup = null;
 const collapsedStages = new Set(); // etapas recolhidas (accordion) — estado de UI, não persistido
+const expandedPeople = new Set();  // músicos expandidos; começam TODOS recolhidos
 
 /* ---------- Persistence ---------- */
 // Etapas passaram a ser da faixa: cada faixa herda uma cópia própria das etapas
@@ -266,9 +268,22 @@ function render() {
   if (route.view === "project" && p) return renderProject(p);
   route = { view: "home" }; renderHome();
 }
-function goHome() { route = { view: "home" }; render(); }
-function goProject(id) { route = { view: "project", projectId: id }; render(); }
-function goTrack(pid, tid) { route = { view: "track", projectId: pid, trackId: tid }; render(); }
+// Navegação: empurra uma entrada no histórico do navegador e sobe o scroll.
+// (Só a navegação sobe o scroll — re-renders internos usam render()/rt() e não sobem.)
+function navTo(r) {
+  route = r;
+  history.pushState(r, "");
+  render();
+  window.scrollTo(0, 0);
+}
+function goHome() { navTo({ view: "home" }); }
+function goProject(id) { navTo({ view: "project", projectId: id }); }
+function goTrack(pid, tid) { navTo({ view: "track", projectId: pid, trackId: tid }); }
+window.addEventListener("popstate", e => {
+  route = e.state || { view: "home" };
+  render();
+  window.scrollTo(0, 0);
+});
 
 function progressBar(bar) {
   return `<div class="progress">
@@ -280,7 +295,7 @@ function progressBar(bar) {
 /* ----- Home ----- */
 function renderHome() {
   const cards = db.projects.map(p => {
-    const bar = projectBar(p), cls = classify(p.tracks.length);
+    const cls = classify(p.tracks.length);
     return `<div class="card ${p.cover ? "" : "no-cover"}" data-open="${p.id}">
         ${p.cover ? `<div class="card-cover"><img src="${p.cover}" alt=""></div>` : ""}
         <div class="card-body">
@@ -292,8 +307,6 @@ function renderHome() {
             <span><b>${p.tracks.length}</b> faixa${p.tracks.length === 1 ? "" : "s"}</span>
             <span><b>${(p.people || []).length}</b> músico${(p.people || []).length === 1 ? "" : "s"}</span>
           </div>
-          <div class="progress-label"><span>Progresso</span><b>${bar.pct}%</b></div>
-          ${progressBar(bar)}
         </div>
       </div>`;
   }).join("");
@@ -312,19 +325,15 @@ function renderHome() {
 
 /* ----- Project (tracks overview) ----- */
 function renderProject(p) {
-  const bar = projectBar(p), cls = classify(p.tracks.length);
+  const cls = classify(p.tracks.length);
+  const nominal = projectNominal(p);
   const rows = p.tracks.map((t, i) => {
-    const tb = trackBar(p, t);
     const pend = nextAction(p, t);
     return `<div class="track-row" data-track="${t.id}">
         <span class="num">${i + 1}</span>
         <div class="track-row-main">
           <div class="track-row-title">${esc(t.title) || "<span class='faint'>Sem título</span>"}</div>
           <div class="track-row-sub">${esc(pend || "—")}</div>
-        </div>
-        <div class="track-row-prog">
-          <div class="progress-label"><span></span><b>${tb.pct}%</b></div>
-          ${progressBar(tb)}
         </div>
         <div class="stage-ctrls">
           <button class="ic-btn" data-move-track="up" data-tid="${t.id}" title="Subir" ${i === 0 ? "disabled" : ""}>${icon("up")}</button>
@@ -355,8 +364,10 @@ function renderProject(p) {
       </div>
     </div>
     <div class="overall-box">
-      <div class="progress-label"><span>Progresso geral</span><b>${bar.pct}%</b></div>
-      ${progressBar(bar)}
+      <div class="overall-title">Estado geral</div>
+      ${nominal.length
+        ? `<div class="nominal">${nominal.map(b => `<div class="nominal-row"><b>${b.count}</b><span>${esc(b.label)}</span></div>`).join("")}</div>`
+        : `<div class="faint">Sem faixas ainda.</div>`}
     </div>
 
     <div class="field proj-notes"><label>Observações gerais do projeto</label>
@@ -366,8 +377,9 @@ function renderProject(p) {
       <div class="elenco-head">Músicos <span class="count">${(p.people || []).length}</span></div>
       <div class="people-list">
         ${(p.people || []).map((x, i, arr) => `
-          <div class="np-person" data-person="${x.id}">
+          <div class="np-person${expandedPeople.has(x.id) ? "" : " collapsed"}" data-person="${x.id}">
             <div class="np-person-top">
+              <button class="accordion-tri" data-person-acc="${x.id}" title="Recolher/expandir">${icon("chevron", expandedPeople.has(x.id) ? "" : "rot-right")}</button>
               <input class="np-name" data-rename-person="${x.id}" value="${esc(x.name)}" placeholder="Nome do músico" autocomplete="off">
               <div class="stage-ctrls">
                 <button class="ic-btn" data-move-person="up" data-pid="${x.id}" title="Subir" ${i === 0 ? "disabled" : ""}>${icon("up")}</button>
@@ -413,6 +425,12 @@ function renderProject(p) {
     confirmDialog(`Excluir a faixa "${(tk && tk.title) || "sem título"}"?`,
       () => { p.tracks = p.tracks.filter(t => t.id !== btn.dataset.delTrackRow); save(); render(); toast("Faixa removida"); },
       { danger: true, okLabel: "Excluir" });
+  }));
+  // recolher/expandir músico
+  app.querySelectorAll("[data-person-acc]").forEach(btn => btn.addEventListener("click", () => {
+    const id = btn.dataset.personAcc;
+    if (expandedPeople.has(id)) expandedPeople.delete(id); else expandedPeople.add(id);
+    render();
   }));
   // reordenar músicos (↑↓)
   app.querySelectorAll("[data-move-person]").forEach(btn => btn.addEventListener("click", () => {
@@ -507,10 +525,32 @@ function nextAction(p, t) {
   return "Tudo concluído 🎉";
 }
 
+// Situação nominal da faixa: a etapa em que ela está + qualificador (sem número)
+function trackSituacao(p, t) {
+  const stages = t.stages || [];
+  if (!stages.length) return "sem etapas";
+  let curIdx = -1;
+  for (let i = 0; i < stages.length; i++) {
+    if (stageStatus(p, t, stages[i]) !== "done") { curIdx = i; break; }
+  }
+  if (curIdx === -1) return "concluída";
+  const cur = stages[curIdx];
+  if (stageStatus(p, t, cur) === "wip") return `${cur.label} em andamento`;
+  if (curIdx > 0) return `${stages[curIdx - 1].label} concluída`;
+  return "não iniciada";
+}
+// Estado geral do projeto: agrupa as faixas por situação nominal (maior grupo primeiro)
+function projectNominal(p) {
+  const map = new Map();
+  (p.tracks || []).forEach(t => { const s = trackSituacao(p, t); map.set(s, (map.get(s) || 0) + 1); });
+  return [...map.entries()].map(([label, count]) => ({ label, count })).sort((a, b) => b.count - a.count);
+}
+
 /* ----- Track detail ----- */
 function renderTrack(p, t) {
-  const bar = trackBar(p, t);
   const allCollapsed = (t.stages || []).length > 0 && t.stages.every(s => collapsedStages.has(s.id));
+  const idx = p.tracks.indexOf(t);
+  const prev = p.tracks[idx - 1], next = p.tracks[idx + 1];
 
   app.innerHTML = `
     <div class="crumb"><span data-home>Projetos</span> <span class="sep">/</span> <span data-proj>${esc(p.title)}</span></div>
@@ -520,7 +560,7 @@ function renderTrack(p, t) {
       </div>
       <button class="btn danger del-btn" data-del-track title="Excluir faixa">${icon("can")}</button>
     </div>
-    <div class="overall-box"><div class="progress-label"><span>Progresso da faixa</span><b>${bar.pct}%</b></div>${progressBar(bar)}</div>
+    <div class="overall-box"><div class="track-situacao">${esc(nextAction(p, t))}</div></div>
 
     ${renderFicha(p, t)}
 
@@ -533,9 +573,15 @@ function renderTrack(p, t) {
       ${(t.stages || []).length > 1 ? `<button class="btn ghost small" data-toggle-all>${allCollapsed ? "Expandir todas" : "Recolher todas"}</button>` : ""}
     </div>
 
+    <div class="track-nav">
+      <button class="ic-btn" data-track-prev title="Faixa anterior" ${prev ? "" : "disabled"}>${icon("left")}</button>
+      <span class="track-nav-pos">${idx + 1} de ${p.tracks.length}</span>
+      <button class="ic-btn" data-track-next title="Próxima faixa" ${next ? "" : "disabled"}>${icon("right")}</button>
+    </div>
+
     <div class="track-foot">
       <button class="btn primary" data-done>✓ Concluir</button>
-      <button class="btn ghost" data-new-track>+ Nova faixa</button>
+      <button class="btn ghost icon-btn" data-new-track>${icon("plus")} Nova faixa</button>
     </div>
 
     ${peopleDatalist(p)}${skillsDatalist(p)}`;
@@ -680,11 +726,11 @@ function renderStage(p, t, stage) {
         <div class="stage-name">
           <button class="accordion-tri" data-accordion title="Recolher/expandir">${icon("chevron", collapsed ? "rot-right" : "")}</button>
           <input class="stage-name-input" data-stage-rename value="${esc(stage.label)}" size="${Math.max(2, (stage.label || "").length)}" placeholder="Nome da etapa" autocomplete="off">
-          ${stateBtn(status, "pause", "data-cycle")}
         </div>
         ${stageCtrls(idx, t.stages.length)}
       </div>
       <div class="stage-body">
+        <button class="holo-state ${status}" data-cycle title="Alternar estado">${icon(status === "done" ? "check" : status === "wip" ? "pause" : "stop")}<span>${STATE_LABEL[status]}</span></button>
         <textarea class="stage-note" data-stage-note placeholder="Nota desta etapa…">${esc(st.note || "")}</textarea>
       </div>
     </section>`;
@@ -780,6 +826,10 @@ function wireTrack(p, t) {
   });
   app.querySelector("[data-done]").addEventListener("click", () => goProject(p.id));
   app.querySelector("[data-new-track]").addEventListener("click", () => openTrackModal(p));
+  const idx = p.tracks.indexOf(t);
+  const prevBtn = app.querySelector("[data-track-prev]"), nextBtn = app.querySelector("[data-track-next]");
+  if (prevBtn && p.tracks[idx - 1]) prevBtn.addEventListener("click", () => goTrack(p.id, p.tracks[idx - 1].id));
+  if (nextBtn && p.tracks[idx + 1]) nextBtn.addEventListener("click", () => goTrack(p.id, p.tracks[idx + 1].id));
 
   // stages
   app.querySelectorAll(".stage-card").forEach(card => {
@@ -1037,4 +1087,4 @@ document.getElementById("btn-export").addEventListener("click", exportJSON);
 document.getElementById("btn-import").addEventListener("click", importJSON);
 document.getElementById("btn-reset").addEventListener("click", resetToSeed);
 document.getElementById("brand").addEventListener("click", goHome);
-loadData().then(render);
+loadData().then(() => { history.replaceState(route, ""); render(); });
