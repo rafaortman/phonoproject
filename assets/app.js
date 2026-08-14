@@ -46,7 +46,7 @@ const ICONS = {
   stop:'<path d="M18.25,31.75v-13.51h13.51v13.51h-13.51ZM20.5,29.5h9v-9h-9v9Z"/>',
   up:'<path d="M23.87,34v-13.7l-6.3,6.3-1.58-1.6,9-9,9,9-1.58,1.6-6.3-6.3v13.7h-2.25Z"/>',
 };
-function icon(name, cls) { return `<svg class="ic${cls ? " " + cls : ""}" viewBox="0 0 50 50" aria-hidden="true">${ICONS[name] || ""}</svg>`; }
+function icon(name, cls) { return `<svg class="ic${cls ? " " + cls : ""}" viewBox="0 0 50 50" width="24" height="24" aria-hidden="true" focusable="false">${ICONS[name] || ""}</svg>`; }
 // Ícone do estado "em andamento" conforme a etapa: gravar na Gravação, senão pausa
 function workingIcon(stage) {
   return /grava/.test(((stage && stage.label) || "").toLowerCase()) ? "record" : "pause";
@@ -54,7 +54,7 @@ function workingIcon(stage) {
 // Botão de estado que cicla □ não iniciado → ○/‖ em andamento → ✓ concluído
 function stateBtn(status, working, attrs) {
   const name = status === "done" ? "check" : status === "wip" ? working : "stop";
-  return `<button class="state-btn ${status}" ${attrs} title="Alternar estado">${icon(name)}</button>`;
+  return `<button type="button" class="state-btn state-btn--${status}" ${attrs} title="Alternar estado (${STATE_LABEL[status]})">${icon(name)}</button>`;
 }
 
 let db = { version: 2, projects: [] };
@@ -142,11 +142,11 @@ function setSync(state) {
   const el = document.getElementById("sync");
   if (!el) return;
   clearTimeout(syncHideTimer);
-  el.className = "sync " + state;
+  el.className = state ? "account__sync is-" + state : "account__sync";
   el.textContent = state === "saving" ? "salvando…" : state === "saved" ? "salvo ✓" : state === "error" ? "erro ao salvar" : "";
   if (state === "saved" || state === "error") {
     syncHideTimer = setTimeout(() => {
-      el.className = "sync";
+      el.className = "account__sync";
       el.textContent = "";
     }, state === "saved" ? 2500 : 5000);
   }
@@ -439,37 +439,71 @@ window.addEventListener("popstate", e => {
   window.scrollTo(0, 0);
 });
 
+/* ----- Seção recolhível (accordion) — cabeçalho + corpo ----- */
+// key: identifica o toggle; open: aberta?; title/count: rótulo; body: HTML interno.
+function accordionSection({ key, open, title, count, body }) {
+  const bodyId = "section-" + key;
+  const badge = count == null ? "" : ` <span class="count">${count}</span>`;
+  return `<section class="section${open ? "" : " is-collapsed"}">
+    <h3 class="section__heading">
+      <button type="button" class="section__toggle" data-section-toggle="${key}" aria-expanded="${open}" aria-controls="${bodyId}">
+        ${icon("chevron", open ? "" : "rot-right")}<span>${esc(title)}${badge}</span>
+      </button>
+    </h3>
+    <div class="section__body" id="${bodyId}">${body}</div>
+  </section>`;
+}
+// Estado aberto/fechado de cada seção recolhível (um único ponto de verdade).
+const SECTION_STATE = {
+  people:       { get: () => peopleSectionOpen, set: v => peopleSectionOpen = v },
+  tracks:       { get: () => tracksSectionOpen, set: v => tracksSectionOpen = v },
+  "track-info": { get: () => trackInfoOpen,     set: v => trackInfoOpen = v },
+  stages:       { get: () => stagesSectionOpen, set: v => stagesSectionOpen = v },
+};
+function wireSectionToggles() {
+  app.querySelectorAll("[data-section-toggle]").forEach(btn => btn.addEventListener("click", () => {
+    const s = SECTION_STATE[btn.dataset.sectionToggle];
+    if (s) { s.set(!s.get()); render(); }
+  }));
+}
+
 /* ----- Home ----- */
 function renderHome() {
-  const newCard = db.projects.length < MAX_PROJECTS
-    ? `<button class="new-project-card" data-action="new"><span>Novo projeto</span></button>`
-    : "";
   const cards = db.projects.map(p => {
     const cls = classify(p.tracks.length);
     const src = coverSrc(p);
-    return `<div class="card ${src ? "" : "no-cover"}" data-open="${p.id}">
-        ${src ? `<div class="card-cover"><img src="${esc(src)}" alt=""></div>` : ""}
-        <div class="card-body">
-          <div class="card-top">
-            <div><h3>${esc(p.title)}</h3><div class="artist">${esc(p.artist) || "&nbsp;"}</div></div>
-            <span class="badge ${cls.key}">${cls.label}</span>
+    const nTracks = p.tracks.length, nPeople = (p.people || []).length;
+    return `<li class="project-card${src ? "" : " project-card--no-cover"}">
+        <a class="project-card__link" href="#" data-open="${p.id}">
+          ${src ? `<span class="project-card__cover"><img src="${esc(src)}" alt=""></span>` : ""}
+          <div class="project-card__body">
+            <div class="project-card__top">
+              <div class="project-card__id">
+                <h3 class="project-card__title">${esc(p.title)}</h3>
+                <div class="project-card__artist">${esc(p.artist) || "&nbsp;"}</div>
+              </div>
+              <span class="badge badge--${cls.key}">${cls.label}</span>
+            </div>
+            <div class="project-card__meta">
+              <span><b>${nTracks}</b> faixa${nTracks === 1 ? "" : "s"}</span>
+              <span><b>${nPeople}</b> músico${nPeople === 1 ? "" : "s"}</span>
+            </div>
           </div>
-          <div class="meta-row">
-            <span><b>${p.tracks.length}</b> faixa${p.tracks.length === 1 ? "" : "s"}</span>
-            <span><b>${(p.people || []).length}</b> músico${(p.people || []).length === 1 ? "" : "s"}</span>
-          </div>
-        </div>
-      </div>`;
+        </a>
+      </li>`;
   }).join("");
+  const newCard = db.projects.length < MAX_PROJECTS
+    ? `<li class="project-card project-card--new"><button type="button" class="project-card__new" data-action="new">+ Novo projeto</button></li>`
+    : "";
 
   app.innerHTML = `
     ${contextBox()}
-    <div class="section-head"><h2>Meus projetos</h2>
+    <div class="list-head"><h2>Meus projetos</h2>
       <span class="count">${db.projects.length} projeto${db.projects.length === 1 ? "" : "s"}</span></div>
-    <div class="grid">${cards}${newCard}</div>`;
+    <ul class="project-grid">${cards}${newCard}</ul>`;
 
   wireContextBox();
-  app.querySelectorAll("[data-open]").forEach(el => el.addEventListener("click", () => goProject(el.dataset.open)));
+  app.querySelectorAll("[data-open]").forEach(el => el.addEventListener("click", e => { e.preventDefault(); goProject(el.dataset.open); }));
   const nb = app.querySelector('[data-action="new"]'); if (nb) nb.addEventListener("click", openNewProjectModal);
 }
 
@@ -478,103 +512,105 @@ function renderProject(p) {
   const cls = classify(p.tracks.length);
   const nominal = projectNominal(p);
   const cover = coverSrc(p);
+  const nTracks = p.tracks.length;
+  const nPeople = (p.people || []).length;
   const rows = p.tracks.map((t, i) => {
     const pend = nextAction(p, t);
     const authors = (t.composers || []).map(id => personName(p, id)).filter(Boolean).join(", ");
-    return `<div class="track-row" data-track="${t.id}">
-        <span class="num">${i + 1}</span>
-        <div class="track-row-main">
-          <div class="track-row-title">${esc(t.title) || "<span class='faint'>Sem título</span>"}</div>
-          ${authors ? `<div class="track-authors">De: ${esc(authors)}</div>` : ""}
-          <div class="track-row-sub">${esc(pend || "—")}</div>
+    return `<li class="track-row">
+        <a class="track-row__link" href="#" data-track="${t.id}">
+          <span class="track-row__num" aria-hidden="true">${i + 1}</span>
+          <span class="track-row__main">
+            <span class="track-row__title">${esc(t.title) || "<span class='faint'>Sem título</span>"}</span>
+            ${authors ? `<span class="track-row__authors">De: ${esc(authors)}</span>` : ""}
+            <span class="track-row__status">${esc(pend || "—")}</span>
+          </span>
+        </a>
+        <div class="row-actions">
+          <button type="button" class="icon-button" data-move-track="up" data-tid="${t.id}" title="Subir" ${i === 0 ? "disabled" : ""}>${icon("up")}</button>
+          <button type="button" class="icon-button" data-move-track="down" data-tid="${t.id}" title="Descer" ${i === nTracks - 1 ? "disabled" : ""}>${icon("down")}</button>
+          <button type="button" class="icon-button icon-button--danger" data-del-track-row="${t.id}" title="Excluir faixa">${icon("close")}</button>
         </div>
-        <div class="stage-ctrls">
-          <button class="ic-btn" data-move-track="up" data-tid="${t.id}" title="Subir" ${i === 0 ? "disabled" : ""}>${icon("up")}</button>
-          <button class="ic-btn" data-move-track="down" data-tid="${t.id}" title="Descer" ${i === p.tracks.length - 1 ? "disabled" : ""}>${icon("down")}</button>
-          <button class="ic-btn danger" data-del-track-row="${t.id}" title="Excluir faixa">${icon("close")}</button>
-        </div>
-      </div>`;
+      </li>`;
   }).join("");
 
   app.innerHTML = `
-    <div class="crumb back icon-btn" data-home>${icon("left")} Projetos</div>
+    <nav class="breadcrumb" aria-label="Trilha de navegação">
+      <button type="button" class="breadcrumb__link" data-home>${icon("left")} Projetos</button>
+    </nav>
     ${guestBanner()}
-    <div class="detail-head">
-      <div class="proj-title-wrap">
-        <div class="proj-cover ${cover ? "" : "empty"}" data-cover title="${p.cover ? "Trocar capa" : "Adicionar capa"}">
-          ${cover ? `<img src="${esc(cover)}" alt="capa"><button class="cover-x" data-cover-rm title="Remover capa">×</button>` : `<span>${coverLoadFailed.has(cloudCoverId(p.cover)) ? "capa indisponível" : p.cover ? "carregando…" : "+ capa"}</span>`}
+    <header class="detail-head">
+      <div class="detail-head__id">
+        <div class="project-cover">
+          <button type="button" class="project-cover__pick${cover ? "" : " project-cover__pick--empty"}" data-cover title="${p.cover ? "Trocar capa" : "Adicionar capa"}">
+            ${cover ? `<img src="${esc(cover)}" alt="Capa do projeto ${esc(p.title)}">` : `<span>${coverLoadFailed.has(cloudCoverId(p.cover)) ? "capa indisponível" : p.cover ? "carregando…" : "+ capa"}</span>`}
+          </button>
+          ${cover ? `<button type="button" class="project-cover__remove" data-cover-rm title="Remover capa">×</button>` : ""}
         </div>
         <div>
           <h2>${esc(p.title)}</h2>
-          <div class="detail-sub">
-            <span class="badge ${cls.key}">${cls.label}</span>
+          <p class="detail-head__sub">
+            <span class="badge badge--${cls.key}">${cls.label}</span>
             ${esc(p.artist) ? `<span>${esc(p.artist)}</span>` : ""}
-            <span>${p.tracks.length} faixa${p.tracks.length === 1 ? "" : "s"}</span>
-          </div>
+            <span>${nTracks} faixa${nTracks === 1 ? "" : "s"}</span>
+          </p>
         </div>
       </div>
-      <div class="head-actions">
-        <button class="btn danger del-btn" data-del-project title="Excluir projeto">${icon("can")}</button>
+      <div class="detail-head__actions">
+        <button type="button" class="btn btn--danger btn--icon" data-del-project title="Excluir projeto">${icon("can")}</button>
       </div>
-    </div>
-    <div class="project-status-summary">
+    </header>
+    <section class="project-status" aria-label="Situação das faixas">
       ${nominal.length
-        ? `<div class="nominal">${nominal.map(b => `<div class="nominal-row"><b>${b.count}</b><span>${esc(b.label)}</span></div>`).join("")}</div>`
-        : `<div class="faint">Sem faixas ainda.</div>`}
+        ? `<ul class="project-status__list">${nominal.map(b => `<li class="project-status__row"><b>${b.count}</b> <span>${esc(b.label)}</span></li>`).join("")}</ul>`
+        : `<p class="faint">Sem faixas ainda.</p>`}
+    </section>
+
+    <div class="field">
+      <label for="proj-notes">Observações do projeto</label>
+      <textarea id="proj-notes" class="note-field" data-proj-notes placeholder="Notas, decisões e pendências do projeto…">${esc(p.notes || "")}</textarea>
     </div>
 
-    <div class="field proj-notes">
-      <textarea class="stage-note" data-proj-notes placeholder="Notas, decisões e pendências do projeto…" aria-label="Observações do projeto">${esc(p.notes || "")}</textarea></div>
-
-    <div class="elenco section-accordion${peopleSectionOpen ? "" : " collapsed"}">
-      <h3 class="section-heading"><button class="section-accordion-head" data-section="people">${icon("chevron", peopleSectionOpen ? "" : "rot-right")}<span>Músicos <span class="count">${(p.people || []).length}</span></span></button></h3>
-      <div class="section-accordion-body">
-      <div class="people-list">
+    ${accordionSection({ key: "people", open: peopleSectionOpen, title: "Músicos", count: nPeople, body: `
+      <ul class="people">
         ${(p.people || []).map((x, i, arr) => `
-          <div class="np-person${expandedPeople.has(x.id) ? "" : " collapsed"}" data-person="${x.id}">
-            <div class="np-person-top">
-              <button class="accordion-tri" data-person-acc="${x.id}" title="Recolher/expandir">${icon("chevron", expandedPeople.has(x.id) ? "" : "rot-right")}</button>
-              <input class="np-name" data-rename-person="${x.id}" value="${esc(x.name)}" placeholder="Nome do músico" autocomplete="off">
-              <div class="stage-ctrls">
-                <button class="ic-btn" data-move-person="up" data-pid="${x.id}" title="Subir" ${i === 0 ? "disabled" : ""}>${icon("up")}</button>
-                <button class="ic-btn" data-move-person="down" data-pid="${x.id}" title="Descer" ${i === arr.length - 1 ? "disabled" : ""}>${icon("down")}</button>
-                <button class="ic-btn danger" data-rm-person="${x.id}" title="Remover dos músicos">${icon("close")}</button>
+          <li class="person${expandedPeople.has(x.id) ? "" : " is-collapsed"}" data-person="${x.id}">
+            <div class="person__top">
+              <button type="button" class="person__toggle" data-person-acc="${x.id}" aria-expanded="${expandedPeople.has(x.id)}" title="Recolher/expandir">${icon("chevron", expandedPeople.has(x.id) ? "" : "rot-right")}</button>
+              <input class="person__name" data-rename-person="${x.id}" value="${esc(x.name)}" aria-label="Nome do músico" placeholder="Nome do músico" autocomplete="off">
+              <div class="row-actions">
+                <button type="button" class="icon-button" data-move-person="up" data-pid="${x.id}" title="Subir" ${i === 0 ? "disabled" : ""}>${icon("up")}</button>
+                <button type="button" class="icon-button" data-move-person="down" data-pid="${x.id}" title="Descer" ${i === arr.length - 1 ? "disabled" : ""}>${icon("down")}</button>
+                <button type="button" class="icon-button icon-button--danger" data-rm-person="${x.id}" title="Remover dos músicos">${icon("close")}</button>
               </div>
             </div>
-            <div class="np-skills">
-              ${(x.skills || []).map((sk, i) => `
-                <div class="np-skill-row">
-                  <input class="np-skill" data-skill-person="${x.id}" data-skill-i="${i}" value="${esc(sk)}" autocomplete="off">
-                  <button class="row-x" data-rm-skill="${x.id}" data-skill-i="${i}" title="Remover skill">×</button>
-                </div>`).join("")}
-              <div class="np-skill-row">
-                <input class="np-skill add" data-add-skill="${x.id}" placeholder="+ skill (Enter)" autocomplete="off">
-                <button type="button" class="row-add" data-add-skill-btn="${x.id}" title="Adicionar skill">+</button>
-              </div>
-            </div>
-          </div>`).join("")}
-      </div>
-      <div class="add-person-row with-btn"><input class="chip-input" data-add-person placeholder="Nome do músico" autocomplete="off"><button type="button" class="row-add" data-add-person-btn title="Adicionar músico">${icon("plus")}</button></div>
-      </div>
-    </div>
+            <ul class="person__skills">
+              ${(x.skills || []).map((sk, si) => `
+                <li class="skill-row">
+                  <input class="skill-row__input" data-skill-person="${x.id}" data-skill-i="${si}" value="${esc(sk)}" aria-label="Habilidade" autocomplete="off">
+                  <button type="button" class="remove-btn" data-rm-skill="${x.id}" data-skill-i="${si}" title="Remover skill">×</button>
+                </li>`).join("")}
+              <li class="skill-row skill-row--add">
+                <input class="skill-row__input" data-add-skill="${x.id}" placeholder="+ skill (Enter)" aria-label="Adicionar habilidade" autocomplete="off">
+                <button type="button" class="add-btn" data-add-skill-btn="${x.id}" title="Adicionar skill">+</button>
+              </li>
+            </ul>
+          </li>`).join("")}
+      </ul>
+      <div class="add-row">
+        <input class="add-row__input" data-add-person placeholder="Nome do músico" aria-label="Nome do novo músico" autocomplete="off">
+        <button type="button" class="add-btn" data-add-person-btn title="Adicionar músico">${icon("plus")}</button>
+      </div>` })}
 
-    <div class="elenco section-accordion${tracksSectionOpen ? "" : " collapsed"}">
-      <h3 class="section-heading"><button class="section-accordion-head" data-section="tracks">${icon("chevron", tracksSectionOpen ? "" : "rot-right")}<span>Faixas <span class="count">${p.tracks.length}</span></span></button></h3>
-      <div class="section-accordion-body">
-        ${p.tracks.length ? `<div class="track-list">${rows}</div>` :
-          `<div class="empty"><h3>Sem faixas</h3><p>Adicione a primeira faixa deste projeto.</p></div>`}
-        <div class="add-track-bar"><button class="btn ghost" data-add-track>+ Adicionar faixa</button></div>
-      </div>
-    </div>`;
+    ${accordionSection({ key: "tracks", open: tracksSectionOpen, title: "Faixas", count: nTracks, body: `
+      ${nTracks ? `<ol class="track-list">${rows}</ol>` :
+        `<div class="empty-state"><h4>Sem faixas</h4><p>Adicione a primeira faixa deste projeto.</p></div>`}
+      <div class="add-row add-row--wide"><button type="button" class="btn btn--ghost" data-add-track>+ Adicionar faixa</button></div>` })}`;
 
   app.querySelector("[data-home]").addEventListener("click", goHome);
-  app.querySelectorAll("[data-section]").forEach(btn => btn.addEventListener("click", () => {
-    if (btn.dataset.section === "people") peopleSectionOpen = !peopleSectionOpen;
-    else tracksSectionOpen = !tracksSectionOpen;
-    render();
-  }));
+  wireSectionToggles();
   const gl = app.querySelector("[data-guest-login]"); if (gl) gl.addEventListener("click", () => openAuthModal("login"));
-  app.querySelectorAll("[data-track]").forEach(el => el.addEventListener("click", () => goTrack(p.id, el.dataset.track)));
+  app.querySelectorAll("[data-track]").forEach(el => el.addEventListener("click", e => { e.preventDefault(); goTrack(p.id, el.dataset.track); }));
   app.querySelector("[data-add-track]").addEventListener("click", () => openTrackModal(p));
 
   // reordenar faixas (↑↓) e excluir faixa direto do card — sem abrir a faixa
@@ -658,14 +694,9 @@ function renderProject(p) {
     person.skills.splice(+b.dataset.skillI, 1); save(); render();
   }));
   const coverEl = app.querySelector("[data-cover]");
-  if (coverEl) coverEl.addEventListener("click", e => {
-    if (e.target.closest("[data-cover-rm]")) return;
-    pickImage(512, 0.72, dataURI => setProjectCover(p, dataURI));
-  });
+  if (coverEl) coverEl.addEventListener("click", () => pickImage(512, 0.72, dataURI => setProjectCover(p, dataURI)));
   const coverRm = app.querySelector("[data-cover-rm]");
-  if (coverRm) coverRm.addEventListener("click", e => {
-    e.stopPropagation(); removeProjectCover(p);
-  });
+  if (coverRm) coverRm.addEventListener("click", () => removeProjectCover(p));
   app.querySelector("[data-del-project]").addEventListener("click", () => {
     confirmDialog(`Excluir o projeto "${p.title}" e todas as suas faixas? Não pode ser desfeito.`,
       () => removeProject(p),
@@ -721,39 +752,40 @@ function renderTrack(p, t) {
   const prev = p.tracks[idx - 1], next = p.tracks[idx + 1];
 
   app.innerHTML = `
-    <div class="crumb"><span data-home>Projetos</span> <span class="sep">/</span> <span data-proj>${esc(p.title)}</span></div>
-    <div class="detail-head">
-      <div style="flex:1">
-        <input class="track-title-input" value="${esc(t.title)}" data-title placeholder="Título da faixa">
+    <nav class="breadcrumb" aria-label="Trilha de navegação">
+      <button type="button" class="breadcrumb__link" data-home>Projetos</button>
+      <span class="breadcrumb__sep" aria-hidden="true">/</span>
+      <button type="button" class="breadcrumb__link" data-proj>${esc(p.title)}</button>
+      <span class="breadcrumb__sep" aria-hidden="true">/</span>
+      <span class="breadcrumb__current" aria-current="page">${esc(t.title) || "Sem título"}</span>
+    </nav>
+    <header class="detail-head">
+      <div class="field detail-head__title">
+        <label for="track-title">Título da faixa</label>
+        <input id="track-title" class="track-title-input" value="${esc(t.title)}" data-title placeholder="Título da faixa">
       </div>
-      <button class="btn danger del-btn" data-del-track title="Excluir faixa">${icon("can")}</button>
-    </div>
-    <section class="track-info section-accordion${trackInfoOpen ? "" : " collapsed"}">
-      <h3 class="section-heading"><button class="section-accordion-head" data-track-info>${icon("chevron", trackInfoOpen ? "" : "rot-right")}<span>Informações gerais</span></button></h3>
-      <div class="section-accordion-body">${renderFicha(p, t)}</div>
-    </section>
+      <button type="button" class="btn btn--danger btn--icon" data-del-track title="Excluir faixa">${icon("can")}</button>
+    </header>
 
-    <section class="track-stages section-accordion${stagesSectionOpen ? "" : " collapsed"}">
-      <h3 class="section-heading"><button class="section-accordion-head" data-stages-section>${icon("chevron", stagesSectionOpen ? "" : "rot-right")}<span>Etapas de produção</span></button></h3>
-      <div class="section-accordion-body">
-        <div class="stages">${(t.stages || []).length
-          ? t.stages.map(s => renderStage(p, t, s)).join("")
-          : `<div class="instr-empty">Nenhuma etapa ainda. Crie a primeira abaixo.</div>`}</div>
-        <div class="add-stage-bar">
-          <button class="btn ghost icon-btn" data-add-stage>${icon("plus")} Etapa</button>
-        </div>
-      </div>
-    </section>
+    ${accordionSection({ key: "track-info", open: trackInfoOpen, title: "Informações gerais", body: renderFicha(p, t) })}
 
-    <div class="track-nav">
-      <button class="ic-btn" data-track-prev title="Faixa anterior" ${prev ? "" : "disabled"}>${icon("left")}</button>
-      <span class="track-nav-pos">${idx + 1} de ${p.tracks.length}</span>
-      <button class="ic-btn" data-track-next title="Próxima faixa" ${next ? "" : "disabled"}>${icon("right")}</button>
-    </div>
+    ${accordionSection({ key: "stages", open: stagesSectionOpen, title: "Etapas de produção", body: `
+      <div class="stage-list">${(t.stages || []).length
+        ? t.stages.map(s => renderStage(p, t, s)).join("")
+        : `<p class="stage-list__empty">Nenhuma etapa ainda. Crie a primeira abaixo.</p>`}</div>
+      <div class="add-row add-row--wide">
+        <button type="button" class="btn btn--ghost btn--icon" data-add-stage>${icon("plus")} Etapa</button>
+      </div>` })}
+
+    <nav class="track-nav" aria-label="Navegação entre faixas">
+      <button type="button" class="icon-button" data-track-prev title="Faixa anterior" ${prev ? "" : "disabled"}>${icon("left")}</button>
+      <span class="track-nav__pos">${idx + 1} de ${p.tracks.length}</span>
+      <button type="button" class="icon-button" data-track-next title="Próxima faixa" ${next ? "" : "disabled"}>${icon("right")}</button>
+    </nav>
 
     <div class="track-foot">
-      <button class="btn ghost icon-btn" data-foot-back>${icon("left")} Voltar</button>
-      <button class="btn ghost icon-btn" data-new-track>${icon("plus")} Nova faixa</button>
+      <button type="button" class="btn btn--ghost btn--icon" data-foot-back>${icon("left")} Voltar</button>
+      <button type="button" class="btn btn--ghost btn--icon" data-new-track>${icon("plus")} Nova faixa</button>
     </div>
 
     ${peopleDatalist(p)}${skillsDatalist(p)}`;
@@ -782,9 +814,9 @@ function closeCortina() {
 }
 function flashField(el) {
   if (!el) return;
-  el.classList.remove("flash-ok"); void el.offsetWidth; // reinicia a animação
-  el.classList.add("flash-ok");
-  setTimeout(() => el.classList.remove("flash-ok"), 900);
+  el.classList.remove("is-flashing"); void el.offsetWidth; // reinicia a animação
+  el.classList.add("is-flashing");
+  setTimeout(() => el.classList.remove("is-flashing"), 900);
 }
 function attachCortina(input, opts) {
   const norm = s => (s || "").trim().toLowerCase();
@@ -810,22 +842,22 @@ function attachCortina(input, opts) {
       const match = s => !q || norm(s).includes(q);
       const ownedF = owned.filter(match), othersF = others.filter(match);
       const exact = [...owned, ...others].some(s => norm(s) === q);
-      const opt = s => `<button type="button" class="cortina-opt" data-val="${esc(s)}">${esc(s)}</button>`;
+      const opt = s => `<button type="button" class="cortina__opt" data-val="${esc(s)}">${esc(s)}</button>`;
 
       const lbl = v => (typeof v === "function" ? v() : v);
       const ownedLabel = lbl(opts.ownedLabel) || "Skills do músico";
       const othersLabel = lbl(opts.othersLabel) || "Outras skills do projeto";
       const typed = input.value.trim();
       let html = "";
-      if (ownedF.length) html += `<div class="cortina-group">${esc(ownedLabel)}</div>` + ownedF.map(opt).join("");
-      if (othersF.length) html += `<div class="cortina-group">${esc(othersLabel)}</div>` + othersF.map(opt).join("");
+      if (ownedF.length) html += `<div class="cortina__group">${esc(ownedLabel)}</div>` + ownedF.map(opt).join("");
+      if (othersF.length) html += `<div class="cortina__group">${esc(othersLabel)}</div>` + othersF.map(opt).join("");
       if (q && !exact) {
         const cl = opts.createLabel ? opts.createLabel(typed) : `+ criar “${typed}”`;
-        html += `<button type="button" class="cortina-opt create" data-val="${esc(typed)}">${esc(cl)}</button>`;
+        html += `<button type="button" class="cortina__opt cortina__opt--create" data-val="${esc(typed)}">${esc(cl)}</button>`;
       }
-      if (!html) html = `<div class="cortina-empty">${esc(opts.emptyText || "Digite para criar…")}</div>`;
+      if (!html) html = `<div class="cortina__empty">${esc(opts.emptyText || "Digite para criar…")}</div>`;
       cortinaEl.innerHTML = html;
-      cortinaEl.querySelectorAll(".cortina-opt").forEach(btn => btn.addEventListener("mousedown", e => {
+      cortinaEl.querySelectorAll(".cortina__opt").forEach(btn => btn.addEventListener("mousedown", e => {
         e.preventDefault(); // impede blur antes do clique
         opts.onPick(btn.dataset.val); closeCortina();
       }));
@@ -859,37 +891,50 @@ function attachCortina(input, opts) {
 
 function renderFicha(p, t) {
   const compChips = (t.composers || []).map(id =>
-    `<span class="chip">${esc(personName(p, id))}<button data-rm-comp="${id}" title="Remover">×</button></span>`).join("");
+    `<li class="chip">${esc(personName(p, id))}<button type="button" class="chip__remove" data-rm-comp="${id}" title="Remover">×</button></li>`).join("");
   const producerChips = (t.producers || []).map(id =>
-    `<span class="chip">${esc(personName(p, id))}<button data-rm-producer="${id}" title="Remover">×</button></span>`).join("");
+    `<li class="chip">${esc(personName(p, id))}<button type="button" class="chip__remove" data-rm-producer="${id}" title="Remover">×</button></li>`).join("");
   return `<div class="ficha">
-    <div class="field composition-field">
-      <label>Compositores</label>
-      <div class="chips">${compChips}<input class="chip-input" data-add-comp list="people-list" placeholder="Nome" autocomplete="off"><button type="button" class="row-add" data-add-comp-btn title="Adicionar compositor">${icon("plus")}</button></div>
+    <div class="field">
+      <label for="add-comp">Compositores</label>
+      <ul class="chips">${compChips}</ul>
+      <div class="add-row">
+        <input id="add-comp" class="add-row__input" data-add-comp list="people-list" placeholder="Nome" autocomplete="off">
+        <button type="button" class="add-btn" data-add-comp-btn title="Adicionar compositor">${icon("plus")}</button>
+      </div>
     </div>
-    <div class="ficha-grid">
-      <div class="field"><label>Estilo / gênero</label><input data-f="style" value="${esc(t.style)}" placeholder="Ex.: MPB, indie…"></div>
-      <div class="field"><label>BPM</label><input data-f="bpm" value="${esc(t.bpm)}" placeholder="—" inputmode="numeric"></div>
-      <div class="field"><label>Tom</label><input data-f="key" value="${esc(t.key)}" placeholder="Ex.: Am"></div>
-      <div class="field"><label>Duração</label><input data-f="duration" value="${esc(t.duration)}" placeholder="Ex.: 3:42"></div>
+    <div class="ficha__grid">
+      <div class="field"><label for="f-style">Estilo / gênero</label><input id="f-style" data-f="style" value="${esc(t.style)}" placeholder="Ex.: MPB, indie…"></div>
+      <div class="field"><label for="f-bpm">BPM</label><input id="f-bpm" data-f="bpm" value="${esc(t.bpm)}" placeholder="—" inputmode="numeric"></div>
+      <div class="field"><label for="f-key">Tom</label><input id="f-key" data-f="key" value="${esc(t.key)}" placeholder="Ex.: Am"></div>
+      <div class="field"><label for="f-duration">Duração</label><input id="f-duration" data-f="duration" value="${esc(t.duration)}" placeholder="Ex.: 3:42"></div>
     </div>
-    <div class="field"><label>Produtor fonográfico</label>
-      <div class="chips">${producerChips}<input class="chip-input" data-add-producer list="people-list" placeholder="Nome" autocomplete="off"><button type="button" class="row-add" data-add-producer-btn title="Adicionar produtor fonográfico">${icon("plus")}</button></div>
+    <div class="field">
+      <label for="add-producer">Produtor fonográfico</label>
+      <ul class="chips">${producerChips}</ul>
+      <div class="add-row">
+        <input id="add-producer" class="add-row__input" data-add-producer list="people-list" placeholder="Nome" autocomplete="off">
+        <button type="button" class="add-btn" data-add-producer-btn title="Adicionar produtor fonográfico">${icon("plus")}</button>
+      </div>
     </div>
-    <div class="field"><label>Letra/cifra</label>
-      <textarea class="lyrics-chord" data-f="lyricsChord" placeholder="Letra e cifra…"${t.lyricsChordHeight ? ` style="height:${Math.round(+t.lyricsChordHeight)}px"` : ""}>${esc(t.lyricsChord || "")}</textarea></div>
-    <div class="field"><label>Observações</label>
-      <textarea data-f="notes" placeholder="Pendências e decisões da faixa…">${esc(t.notes)}</textarea></div>
+    <div class="field">
+      <label for="f-lyrics">Letra/cifra</label>
+      <textarea id="f-lyrics" class="lyrics-chord" data-f="lyricsChord" placeholder="Letra e cifra…"${t.lyricsChordHeight ? ` style="height:${Math.round(+t.lyricsChordHeight)}px"` : ""}>${esc(t.lyricsChord || "")}</textarea>
+    </div>
+    <div class="field">
+      <label for="f-notes">Observações</label>
+      <textarea id="f-notes" data-f="notes" placeholder="Pendências e decisões da faixa…">${esc(t.notes)}</textarea>
+    </div>
   </div>`;
 }
 
 // Controles do cabeçalho da etapa: subir / descer / remover
 function stageCtrls(t, stage, idx, n) {
   if (stage.id === t.baseStageId) return "";
-  return `<div class="stage-ctrls">
-    <button class="ic-btn" data-move="up" title="Subir" ${idx <= (t.baseStageId ? 1 : 0) ? "disabled" : ""}>${icon("up")}</button>
-    <button class="ic-btn" data-move="down" title="Descer" ${idx === n - 1 ? "disabled" : ""}>${icon("down")}</button>
-    <button class="ic-btn danger" data-stage-del title="Remover etapa">${icon("close")}</button>
+  return `<div class="row-actions">
+    <button type="button" class="icon-button" data-move="up" title="Subir" ${idx <= (t.baseStageId ? 1 : 0) ? "disabled" : ""}>${icon("up")}</button>
+    <button type="button" class="icon-button" data-move="down" title="Descer" ${idx === n - 1 ? "disabled" : ""}>${icon("down")}</button>
+    <button type="button" class="icon-button icon-button--danger" data-stage-del title="Remover etapa">${icon("close")}</button>
   </div>`;
 }
 
@@ -900,19 +945,19 @@ function renderStage(p, t, stage) {
 
   if (stage.mode === "holistic") {
     const collapsed = collapsedStages.has(stage.id);
-    return `<section class="stage-card st-${status}${collapsed ? " collapsed" : ""}" data-stage="${stage.id}">
-      <div class="stage-head">
-        <div class="stage-name">
-          <button class="accordion-tri" data-accordion title="Recolher/expandir">${icon("chevron", collapsed ? "rot-right" : "")}</button>
-          <input class="stage-name-input" data-stage-rename value="${esc(stage.label)}" size="${Math.max(2, (stage.label || "").length)}" placeholder="Nome da etapa" autocomplete="off">
+    return `<article class="stage-card stage-card--${status}${collapsed ? " is-collapsed" : ""}" data-stage="${stage.id}">
+      <header class="stage-card__head">
+        <div class="stage-card__name">
+          <button type="button" class="stage-card__toggle" data-accordion aria-expanded="${!collapsed}" title="Recolher/expandir">${icon("chevron", collapsed ? "rot-right" : "")}</button>
+          <input class="stage-card__name-input" data-stage-rename value="${esc(stage.label)}" size="${Math.max(2, (stage.label || "").length)}" aria-label="Nome da etapa" placeholder="Nome da etapa" autocomplete="off">
         </div>
         ${stageCtrls(t, stage, idx, t.stages.length)}
+      </header>
+      <div class="stage-card__body">
+        <button type="button" class="stage-state stage-state--${status}" data-cycle title="Alternar estado">${icon(status === "done" ? "check" : status === "wip" ? "pause" : "stop")}<span>${STATE_LABEL[status]}</span></button>
+        <textarea class="stage-card__note" data-stage-note aria-label="Nota da etapa ${esc(stage.label)}" placeholder="Nota desta etapa…">${esc(st.note || "")}</textarea>
       </div>
-      <div class="stage-body">
-        <button class="holo-state ${status}" data-cycle title="Alternar estado">${icon(status === "done" ? "check" : status === "wip" ? "pause" : "stop")}<span>${STATE_LABEL[status]}</span></button>
-        <textarea class="stage-note" data-stage-note placeholder="Nota desta etapa…">${esc(st.note || "")}</textarea>
-      </div>
-    </section>`;
+    </article>`;
   }
 
   // instruments mode
@@ -925,16 +970,16 @@ function renderStage(p, t, stage) {
 
   const body = rows.map(r => {
     const musico = r.inst.personId ? personName(p, r.inst.personId) : "";
-    return `<div class="instr-row">
+    return `<li class="instr-row">
       ${stateBtn(r.state, wIcon, `data-check="${r.inst.id}"`)}
       ${isFirst
-        ? `<input class="instr-name" data-iname="${r.inst.id}" value="${esc(r.inst.name)}" placeholder="Instrumento" autocomplete="off">
-           <input class="instr-musico" data-imusico="${r.inst.id}" value="${esc(musico)}" placeholder="Músico" autocomplete="off">`
-        : `<div class="instr-name ro">${esc(r.inst.name) || "<span class='faint'>—</span>"}</div>
-           <div class="instr-musico ro">${esc(musico)}</div>`}
-      <input class="instr-note" data-inote="${r.inst.id}" value="${esc(r.note)}" placeholder="nota (ex.: cortar 200Hz)">
-      ${isFirst ? `<button class="row-x" data-idel="${r.inst.id}" title="Remover instrumento">×</button>` : "<span></span>"}
-    </div>`;
+        ? `<input class="instr-row__name" data-iname="${r.inst.id}" value="${esc(r.inst.name)}" aria-label="Instrumento" placeholder="Instrumento" autocomplete="off">
+           <input class="instr-row__musico" data-imusico="${r.inst.id}" value="${esc(musico)}" aria-label="Músico" placeholder="Músico" autocomplete="off">`
+        : `<span class="instr-row__name instr-row__name--readonly">${esc(r.inst.name) || "<span class='faint'>—</span>"}</span>
+           <span class="instr-row__musico instr-row__musico--readonly">${esc(musico)}</span>`}
+      <input class="instr-row__note" data-inote="${r.inst.id}" value="${esc(r.note)}" aria-label="Nota do instrumento" placeholder="nota (ex.: cortar 200Hz)">
+      ${isFirst ? `<button type="button" class="remove-btn" data-idel="${r.inst.id}" title="Remover instrumento">×</button>` : "<span></span>"}
+    </li>`;
   }).join("");
 
   const meter = rows.length
@@ -943,23 +988,23 @@ function renderStage(p, t, stage) {
 
   const collapsed = collapsedStages.has(stage.id);
 
-  return `<section class="stage-card st-${status}${collapsed ? " collapsed" : ""}" data-stage="${stage.id}">
-    <div class="stage-head">
-      <div class="stage-name">
-        <button class="accordion-tri" data-accordion title="Recolher/expandir">${icon("chevron", collapsed ? "rot-right" : "")}</button>
-        <input class="stage-name-input" data-stage-rename value="${esc(stage.label)}" size="${Math.max(2, (stage.label || "").length)}" placeholder="Nome da etapa" autocomplete="off"></div>
+  return `<article class="stage-card stage-card--${status}${collapsed ? " is-collapsed" : ""}" data-stage="${stage.id}">
+    <header class="stage-card__head">
+      <div class="stage-card__name">
+        <button type="button" class="stage-card__toggle" data-accordion aria-expanded="${!collapsed}" title="Recolher/expandir">${icon("chevron", collapsed ? "rot-right" : "")}</button>
+        <input class="stage-card__name-input" data-stage-rename value="${esc(stage.label)}" size="${Math.max(2, (stage.label || "").length)}" aria-label="Nome da etapa" placeholder="Nome da etapa" autocomplete="off"></div>
       ${stageCtrls(t, stage, idx, t.stages.length)}
-    </div>
-    <div class="stage-body">
-      <div class="instr-list">${body || `<div class="instr-empty">${esc(meter)}</div>`}</div>
-      ${isFirst ? `<button class="btn ghost add-instr icon-btn" data-add-instr>${icon("plus")} Instrumento</button>` : ""}
-      <div class="meter-row"><span class="meter">${rows.length ? esc(meter) : ""}</span></div>
-      <textarea class="stage-note" data-stage-note placeholder="Nota geral da etapa…">${esc(st.note || "")}</textarea>
-      <div class="sign-row">
-        <button class="btn sign icon-btn ${st.signedOff ? "done" : (allDone ? "ghost pulse" : "ghost")}" data-sign>${icon("check")} ${st.signedOff ? "Concluída" : "Concluir"}</button>
+    </header>
+    <div class="stage-card__body">
+      ${body ? `<ul class="instr-list">${body}</ul>` : `<p class="instr-list__empty">${esc(meter)}</p>`}
+      ${isFirst ? `<button type="button" class="btn btn--ghost btn--icon stage-card__add-instr" data-add-instr>${icon("plus")} Instrumento</button>` : ""}
+      <p class="stage-card__meter">${rows.length ? esc(meter) : ""}</p>
+      <textarea class="stage-card__note" data-stage-note aria-label="Nota geral da etapa ${esc(stage.label)}" placeholder="Nota geral da etapa…">${esc(st.note || "")}</textarea>
+      <div class="stage-card__sign">
+        <button type="button" class="btn btn--sign btn--icon ${st.signedOff ? "is-done" : (allDone ? "btn--ghost is-ready" : "btn--ghost")}" data-sign>${icon("check")} ${st.signedOff ? "Concluída" : "Concluir"}</button>
       </div>
     </div>
-  </section>`;
+  </article>`;
 }
 
 /* ----- Track wiring ----- */
@@ -969,10 +1014,7 @@ function wireTrack(p, t) {
   app.querySelector("[data-proj]").addEventListener("click", () => goProject(p.id));
 
   app.querySelector("[data-title]").addEventListener("change", e => { t.title = e.target.value.trim(); save(); });
-  const trackInfo = app.querySelector("[data-track-info]");
-  if (trackInfo) trackInfo.addEventListener("click", () => { trackInfoOpen = !trackInfoOpen; renderTrack(p, t); });
-  const stagesSection = app.querySelector("[data-stages-section]");
-  if (stagesSection) stagesSection.addEventListener("click", () => { stagesSectionOpen = !stagesSectionOpen; renderTrack(p, t); });
+  wireSectionToggles();
   app.querySelector("[data-foot-back]").addEventListener("click", () => goProject(p.id));
 
   // ficha fields
@@ -1172,7 +1214,7 @@ function wireTrack(p, t) {
 
 /* ---------- Modals ---------- */
 function modal(html) {
-  const b = document.createElement("div"); b.className = "modal-backdrop"; b.innerHTML = `<div class="modal">${html}</div>`;
+  const b = document.createElement("div"); b.className = "modal-backdrop"; b.innerHTML = `<div class="modal" role="dialog" aria-modal="true" tabindex="-1">${html}</div>`;
   document.body.appendChild(b);
   const close = () => b.remove();
   b.addEventListener("click", e => { if (e.target === b) close(); });
@@ -1183,10 +1225,10 @@ function modal(html) {
 function confirmDialog(message, onConfirm, opts = {}) {
   const { b, close } = modal(`
     <h3>${esc(opts.title || "Confirmar")}</h3>
-    <p class="confirm-msg">${esc(message)}</p>
-    <div class="modal-actions">
-      <button class="btn ghost" data-cancel>Cancelar</button>
-      <button class="btn ${opts.danger ? "danger-solid" : "primary"}" data-ok>${esc(opts.okLabel || "Confirmar")}</button>
+    <p class="modal__message">${esc(message)}</p>
+    <div class="modal__actions">
+      <button class="btn btn--ghost" data-cancel>Cancelar</button>
+      <button type="button" class="btn ${opts.danger ? "btn--danger-solid" : "btn--primary"}" data-ok>${esc(opts.okLabel || "Confirmar")}</button>
     </div>`);
   b.querySelector("[data-cancel]").addEventListener("click", close);
   const ok = b.querySelector("[data-ok]");
@@ -1198,10 +1240,10 @@ function openNewProjectModal() {
   if ((db.projects || []).length >= MAX_PROJECTS) return;
   const { b, close } = modal(`
     <h3>Novo projeto fonográfico</h3>
-    <div class="field"><label>Título do projeto</label><input id="np-title" placeholder="Ex.: Meu novo álbum" autocomplete="off"></div>
-    <div class="field"><label>Artista</label><input id="np-artist" placeholder="Ex.: Nome do artista" autocomplete="off"></div>
-    <p class="hint">Tipo definido pelo nº de faixas: 1–3 Single · 4–6 EP · 7+ Álbum. Músicos, faixas e etapas você monta depois, na tela do projeto.</p>
-    <div class="modal-actions"><button class="btn ghost" data-cancel>Cancelar</button><button class="btn primary" data-ok>Criar projeto</button></div>`);
+    <div class="field"><label for="np-title">Título do projeto</label><input id="np-title" placeholder="Ex.: Meu novo álbum" autocomplete="off"></div>
+    <div class="field"><label for="np-artist">Artista</label><input id="np-artist" placeholder="Ex.: Nome do artista" autocomplete="off"></div>
+    <p class="modal__hint">Tipo definido pelo nº de faixas: 1–3 Single · 4–6 EP · 7+ Álbum. Músicos, faixas e etapas você monta depois, na tela do projeto.</p>
+    <div class="modal__actions"><button class="btn btn--ghost" data-cancel>Cancelar</button><button class="btn btn--primary" data-ok>Criar projeto</button></div>`);
   const title = b.querySelector("#np-title"); title.focus();
   b.querySelector("[data-cancel]").addEventListener("click", close);
 
@@ -1220,8 +1262,8 @@ function openNewProjectModal() {
 function openTrackModal(p) {
   const { b, close } = modal(`
     <h3>Nova faixa</h3>
-    <div class="field"><label>Título</label><input id="tk-title" placeholder="Título da faixa" autocomplete="off"></div>
-    <div class="modal-actions"><button class="btn ghost" data-cancel>Cancelar</button><button class="btn primary" data-ok>Criar faixa</button></div>`);
+    <div class="field"><label for="tk-title">Título</label><input id="tk-title" placeholder="Título da faixa" autocomplete="off"></div>
+    <div class="modal__actions"><button class="btn btn--ghost" data-cancel>Cancelar</button><button class="btn btn--primary" data-ok>Criar faixa</button></div>`);
   const title = b.querySelector("#tk-title"); title.focus();
   b.querySelector("[data-cancel]").addEventListener("click", close);
   const create = () => {
@@ -1242,8 +1284,8 @@ let toastTimer;
 function toast(msg) {
   let el = document.getElementById("toast");
   if (!el) { el = document.createElement("div"); el.id = "toast"; el.className = "toast"; document.body.appendChild(el); }
-  el.textContent = msg; el.classList.add("show");
-  clearTimeout(toastTimer); toastTimer = setTimeout(() => el.classList.remove("show"), 2600);
+  el.textContent = msg; el.classList.add("is-visible");
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => el.classList.remove("is-visible"), 2600);
 }
 
 /* ---------- Autenticação (4 estados) ---------- */
@@ -1255,11 +1297,11 @@ function updateChrome() {
   const slot = document.getElementById("authslot");
   const sess = api.session();
   if (api.isLoggedIn() && sess && isSynced()) {
-    slot.innerHTML = `<span class="who">${esc(sess.name || sess.username)}</span><span class="sync" id="sync"></span><button class="btn ghost" data-act="logout">Sair</button>`;
+    slot.innerHTML = `<span class="account__name">${esc(sess.name || sess.username)}</span><span class="account__sync" id="sync"></span><button class="btn btn--ghost" data-act="logout">Sair</button>`;
   } else if (api.isLoggedIn() && sess) {
-    slot.innerHTML = `<span class="who">${esc(sess.name || sess.username)}</span><span class="sync" id="sync"></span><span class="chip-local">não sincronizado</span><button class="btn ghost" data-act="logout">Sair</button>`;
+    slot.innerHTML = `<span class="account__name">${esc(sess.name || sess.username)}</span><span class="account__sync" id="sync"></span><span class="account__badge">não sincronizado</span><button class="btn btn--ghost" data-act="logout">Sair</button>`;
   } else {
-    slot.innerHTML = `<button class="btn ghost" data-act="login">Entrar</button>`;
+    slot.innerHTML = `<button class="btn btn--ghost" data-act="login">Entrar</button>`;
   }
   slot.querySelectorAll("[data-act]").forEach(b => b.addEventListener("click", () => {
     const a = b.dataset.act;
@@ -1287,11 +1329,11 @@ function adoptGuestLoggedIn(local) {
   enterAppShell();
 }
 async function enterApp() {
-  app.innerHTML = `<div class="ctx-box"><p class="auth-loading">Carregando…</p></div>`;
+  app.innerHTML = `<div class="context-box"><p class="context-box__loading">Carregando…</p></div>`;
   try { adoptCloud(await api.load()); }
   catch (e) {
     if (!api.isLoggedIn()) { clearOwner(); toast(e.message || "Sessão expirada"); return boot(); }
-    app.innerHTML = `<div class="ctx-box"><div class="ctx-text"><b>Não foi possível carregar seus projetos</b><p>${esc(e.message || "Erro no servidor.")}</p></div><div class="ctx-actions"><button class="btn primary" data-retry-load>Tentar novamente</button><button class="btn ghost" data-load-logout>Sair</button></div></div>`;
+    app.innerHTML = `<div class="context-box"><div class="context-box__text"><b>Não foi possível carregar seus projetos</b><p>${esc(e.message || "Erro no servidor.")}</p></div><div class="context-box__actions"><button class="btn btn--primary" data-retry-load>Tentar novamente</button><button class="btn btn--ghost" data-load-logout>Sair</button></div></div>`;
     app.querySelector("[data-retry-load]").addEventListener("click", enterApp);
     app.querySelector("[data-load-logout]").addEventListener("click", doLogout);
   }
@@ -1320,25 +1362,25 @@ async function doLogout() {
   boot();
 }
 
-// Box de contexto no topo da home (antes do .section-head), conforme o estado
+// Box de contexto no topo da home (antes do .list-head), conforme o estado
 function contextBox() {
   const sess = api.session();
   if (api.isLoggedIn() && sess && isSynced()) return "";
   if (api.isLoggedIn() && sess) {
-    return `<div class="ctx-box">
-      <div class="ctx-text"><b>Projeto encontrado neste dispositivo</b><p>Ele ainda não está na sua conta. Salve para acessá-lo de outros dispositivos.</p></div>
-      <div class="ctx-actions"><button class="btn ghost" data-ctx="discard">Descartar</button><button class="btn primary" data-ctx="save">Salvar na minha conta</button></div>
+    return `<div class="context-box">
+      <div class="context-box__text"><b>Projeto encontrado neste dispositivo</b><p>Ele ainda não está na sua conta. Salve para acessá-lo de outros dispositivos.</p></div>
+      <div class="context-box__actions"><button class="btn btn--ghost" data-ctx="discard">Descartar</button><button class="btn btn--primary" data-ctx="save">Salvar na minha conta</button></div>
     </div>`;
   }
   if ((db.projects || []).length) {
-    return `<div class="ctx-box">
-      <div class="ctx-text"><b>Modo local</b><p>Seus projetos ficam salvos só neste dispositivo. Crie uma conta para guardá-los na nuvem e acessar de qualquer lugar. <button class="linkbtn" data-ctx="info">Entenda como funciona</button>.</p></div>
-      <div class="ctx-actions"><button class="btn ghost" data-ctx="login">Entrar</button></div>
+    return `<div class="context-box">
+      <div class="context-box__text"><b>Modo local</b><p>Seus projetos ficam salvos só neste dispositivo. Crie uma conta para guardá-los na nuvem e acessar de qualquer lugar. <button class="link-btn" data-ctx="info">Entenda como funciona</button>.</p></div>
+      <div class="context-box__actions"><button class="btn btn--ghost" data-ctx="login">Entrar</button></div>
     </div>`;
   }
-  return `<div class="ctx-box welcome-box">
-    <div class="ctx-text"><b>Bem-vindo</b><p>Organize a produção dos seus projetos musicais — faixas, pessoas, instrumentos e etapas de produção. Comece agora sem cadastro (salvo só neste dispositivo) ou crie uma conta para guardá-los na nuvem e acessar de qualquer lugar. <button class="linkbtn" data-ctx="info">Entenda como funciona</button>.</p></div>
-    <div class="ctx-actions"><button class="btn primary" data-ctx="new">Criar projeto</button><button class="btn ghost" data-ctx="login">Entrar</button></div>
+  return `<div class="context-box context-box--welcome">
+    <div class="context-box__text"><b>Bem-vindo</b><p>Organize a produção dos seus projetos musicais — faixas, pessoas, instrumentos e etapas de produção. Comece agora sem cadastro (salvo só neste dispositivo) ou crie uma conta para guardá-los na nuvem e acessar de qualquer lugar. <button class="link-btn" data-ctx="info">Entenda como funciona</button>.</p></div>
+    <div class="context-box__actions"><button class="btn btn--primary" data-ctx="new">Criar projeto</button><button class="btn btn--ghost" data-ctx="login">Entrar</button></div>
   </div>`;
 }
 function wireContextBox() {
@@ -1370,9 +1412,9 @@ function saveLocalToAccount() {
 function openStorageInfo() {
   const { b, close } = modal(`
     <h3>Como funciona o armazenamento?</h3>
-    <p class="confirm-msg">Sem conta, seus projetos ficam salvos <b>só neste navegador</b> (armazenamento local). Não se perdem ao recarregar, mas ficam presos a este dispositivo.</p>
-    <p class="confirm-msg">Com uma conta, eles são <b>salvos na nuvem</b> automaticamente — você acessa de qualquer lugar e não corre risco de perder se limpar o navegador.</p>
-    <div class="modal-actions"><button class="btn primary" data-ok>Entendi</button></div>`);
+    <p class="modal__message">Sem conta, seus projetos ficam salvos <b>só neste navegador</b> (armazenamento local). Não se perdem ao recarregar, mas ficam presos a este dispositivo.</p>
+    <p class="modal__message">Com uma conta, eles são <b>salvos na nuvem</b> automaticamente — você acessa de qualquer lugar e não corre risco de perder se limpar o navegador.</p>
+    <div class="modal__actions"><button class="btn btn--primary" data-ok>Entendi</button></div>`);
   b.querySelector("[data-ok]").addEventListener("click", close);
 }
 
@@ -1386,15 +1428,17 @@ function openAuthModal(mode) {
     coupon: "Se não tem cupom, solicite ao desenvolvedor.",
   };
   const { b, close } = modal(`
-    <div class="auth-logo">${DISC_SVG}</div>
-    <h3 class="auth-title">${isLogin ? "Entrar" : "Criar conta"}</h3>
-    ${isLogin ? "" : `<div class="field"><label>Nome</label><input id="au-name" autocomplete="name" placeholder="${ph.name}"></div>`}
-    <div class="field"><label>Usuário</label><input id="au-user" autocomplete="username" placeholder="${ph.user}"></div>
-    <div class="field"><label>Senha</label><input id="au-pass" type="password" autocomplete="${isLogin ? "current-password" : "new-password"}" placeholder="${ph.pass}"></div>
-    ${isLogin ? "" : `<div class="field"><label>Cupom</label><input id="au-coupon" autocomplete="off" placeholder="${ph.coupon}"></div>`}
-    <div class="auth-msg" id="au-msg"></div>
-    <div class="modal-actions"><button class="btn ghost" data-cancel>Cancelar</button><button class="btn primary" id="au-go">${isLogin ? "Entrar" : "Criar conta"}</button></div>
-    <div class="auth-alt">${isLogin ? `Não tem conta? <button class="linkbtn" data-swap="signup">Criar conta</button>` : `Já tem conta? <button class="linkbtn" data-swap="login">Entrar</button>`}</div>`);
+    <div class="auth">
+    <div class="auth__logo">${DISC_SVG}</div>
+    <h3 class="auth__title">${isLogin ? "Entrar" : "Criar conta"}</h3>
+    ${isLogin ? "" : `<div class="field"><label for="au-name">Nome</label><input id="au-name" autocomplete="name" placeholder="${ph.name}"></div>`}
+    <div class="field"><label for="au-user">Usuário</label><input id="au-user" autocomplete="username" placeholder="${ph.user}"></div>
+    <div class="field"><label for="au-pass">Senha</label><input id="au-pass" type="password" autocomplete="${isLogin ? "current-password" : "new-password"}" placeholder="${ph.pass}"></div>
+    ${isLogin ? "" : `<div class="field"><label for="au-coupon">Cupom</label><input id="au-coupon" autocomplete="off" placeholder="${ph.coupon}"></div>`}
+    <div class="auth__message" id="au-msg"></div>
+    <div class="modal__actions"><button type="button" class="btn btn--ghost" data-cancel>Cancelar</button><button type="button" class="btn btn--primary" id="au-go">${isLogin ? "Entrar" : "Criar conta"}</button></div>
+    <div class="auth__alt">${isLogin ? `Não tem conta? <button type="button" class="link-btn" data-swap="signup">Criar conta</button>` : `Já tem conta? <button type="button" class="link-btn" data-swap="login">Entrar</button>`}</div>
+    </div>`);
   const msg = t => { b.querySelector("#au-msg").textContent = t || ""; };
   const go = b.querySelector("#au-go");
   const submit = () => {
@@ -1424,16 +1468,16 @@ function onAuthed(cloudData) {
 function conflictDialog(title, onNew, onDiscard) {
   const { b, close } = modal(`
     <h3>Já existe "${esc(title)}" na sua conta</h3>
-    <p class="confirm-msg">Um projeto com esse nome já está na sua conta. O que fazer com o deste dispositivo?</p>
-    <div class="modal-actions"><button class="btn ghost" data-discard>Descartar o local</button><button class="btn primary" data-new>Salvar como novo</button></div>`);
+    <p class="modal__message">Um projeto com esse nome já está na sua conta. O que fazer com o deste dispositivo?</p>
+    <div class="modal__actions"><button class="btn btn--ghost" data-discard>Descartar o local</button><button class="btn btn--primary" data-new>Salvar como novo</button></div>`);
   b.querySelector("[data-new]").addEventListener("click", () => { close(); onNew(); });
   b.querySelector("[data-discard]").addEventListener("click", () => { close(); onDiscard(); });
 }
 function projectLimitDialog(title, onDiscard, onCancel) {
   const { b, close } = modal(`
     <h3>Limite de ${MAX_PROJECTS} projetos</h3>
-    <p class="confirm-msg">Não há espaço na conta para salvar "${esc(title)}". Descarte este projeto local para continuar ou cancele a sincronização.</p>
-    <div class="modal-actions"><button class="btn ghost" data-cancel-sync>Cancelar sincronização</button><button class="btn danger" data-discard>Descartar o local</button></div>`);
+    <p class="modal__message">Não há espaço na conta para salvar "${esc(title)}". Descarte este projeto local para continuar ou cancele a sincronização.</p>
+    <div class="modal__actions"><button class="btn btn--ghost" data-cancel-sync>Cancelar sincronização</button><button class="btn btn--danger" data-discard>Descartar o local</button></div>`);
   b.querySelector("[data-discard]").addEventListener("click", () => { close(); onDiscard(); });
   b.querySelector("[data-cancel-sync]").addEventListener("click", () => { close(); onCancel(); });
 }
@@ -1494,7 +1538,7 @@ function syncLocalToAccount() {
 // Banner sintético dentro de um projeto quando deslogado
 function guestBanner() {
   if (api.isLoggedIn()) return "";
-  return `<div class="guest-banner">Você está deslogado. Entre para acessar este projeto em outros dispositivos. <button class="linkbtn" data-guest-login>Entrar</button></div>`;
+  return `<div class="guest-banner" role="note">Você está deslogado. Entre para acessar este projeto em outros dispositivos. <button type="button" class="link-btn" data-guest-login>Entrar</button></div>`;
 }
 
 /* ---------- Boot ---------- */
@@ -1509,5 +1553,5 @@ function boot() {
   }
   enterGuest();                                                             // convidado (com ou sem projeto) → app + box
 }
-document.getElementById("brand").addEventListener("click", goHome);
+document.getElementById("brand").addEventListener("click", e => { e.preventDefault(); goHome(); });
 boot();
